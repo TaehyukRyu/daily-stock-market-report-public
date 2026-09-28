@@ -1,0 +1,67 @@
+name: Tests
+
+# ──────────────────────────────────────────────────────────────
+# push / PR 마다 도는 테스트. Daily Report(ci.yml)와 분리한다.
+#
+# [왜 -m "not costly" 인가]
+#   이 스위트의 111건은 실제 유료 API를 호출한다 (목이 아니다).
+#   전체를 돌리면 78분 + OpenAI 호출 82건이 매번 과금된다.
+#   push마다 그럴 수는 없으므로, 무료·빠른 252건만 돌린다 (약 30초).
+#   분류는 tests/conftest.py 의 COSTLY_MODULES 참조.
+# ──────────────────────────────────────────────────────────────
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fast:
+    name: Fast tests (no paid API)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements-ci-frozen.txt
+
+      - name: Install TA-Lib C library
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y build-essential wget
+          wget -q http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
+          tar -xzf ta-lib-0.4.0-src.tar.gz
+          cd ta-lib && ./configure --prefix=/usr -q && make -s && sudo make install -s && sudo ldconfig
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install --no-deps -r requirements-ci-frozen.txt
+
+      - name: Create runtime directories
+        run: mkdir -p data/reports data/signals logs
+
+      # 유료 API를 호출하지 않는 집합이지만, 일부 모듈이 import 시점에
+      # 키 존재 여부를 확인하므로 더미 값을 넣어 import 실패를 막는다.
+      # 실제 호출이 없으므로 과금되지 않는다.
+      # (실제 키를 넣으면 안 된다 — 이 job은 시크릿을 받지 않는다.)
+      - name: Run fast tests
+        env:
+          OPENAI_API_KEY:    "dummy-unused-in-fast-tests"
+          ANTHROPIC_API_KEY: "dummy-unused-in-fast-tests"
+          PYTHONIOENCODING:  utf-8
+          PYTHONUNBUFFERED:  "1"
+        run: pytest tests/ -m "not costly" -q --tb=short

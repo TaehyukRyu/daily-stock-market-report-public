@@ -17,12 +17,22 @@ Chief Strategist Agent v4.0
   - rr_ratio, position_size_pct, holding_period_weeks, entry_strategy
 """
 
+import logging
 import os
 from datetime import datetime
 from anthropic import AsyncAnthropic
 
+logger = logging.getLogger(__name__)
+
 from src.schemas.agent_output import AnalysisReport
 from src.rag.context_injection import get_context_for_agent, inject_context_into_prompt
+from src.utils.llm_budget import record_usage
+from src.utils.market_session import market_session_note
+from src.agents.chief_python import (
+    chief_mode, run_python_sonnet, compute_trade_params, params_from_report, DEFAULT_STOP_PCT,
+    apply_atr_stop, decide, format_decision,
+)
+from src.utils.shadow_log import input_hash, log_shadow, shadow_active
 
 
 # ─────────────────────────────────────────────────────────
@@ -48,7 +58,7 @@ CHIEF_TOOLS = [
     {
         "name": "submit_final_strategy",
         "description": (
-            "7명 애널리스트 분석과 토론 결과를 종합한 최종 투자 전략을 제출합니다. "
+            "확정된 방향에 대한 설명과 리스크를 제출합니다. "
             "분석이 완료되면 반드시 이 도구를 호출하여 결과를 제출해야 합니다."
         ),
         "input_schema": {
@@ -57,16 +67,16 @@ CHIEF_TOOLS = [
                 "recommendation": {
                     "type": "string",
                     "enum": ["BUY", "SELL", "HOLD"],
-                    "description": "confidence 가중 투표 결과",
+                    "description": "[확정된 최종 방향]의 값을 그대로. 다르게 내도 시스템이 되돌린다.",
                 },
                 "confidence": {
                     "type": "number",
-                    "description": "최종 확신도 (0.0~1.0). 에이전트 간 충돌이 클수록 낮게.",
+                    "description": "[확정된 최종 방향]의 확신도를 그대로. 다르게 내도 시스템이 되돌린다.",
                 },
                 "reasoning": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "투표 집계 → 토론 핵심 쟁점 → 결론 순서로 3개 이상",
+                    "description": "확정 방향의 근거 → 토론 핵심 쟁점 → 결론 순서로 3개 이상",
                 },
                 "data_sources": {
                     "type": "array",
@@ -97,7 +107,7 @@ CHIEF_TOOLS = [
                 },
                 "stop_loss_pct": {
                     "type": "number",
-                    "description": "BUY 시 손절 비율(%). 음수, -3 ~ -6 범위. 예: -4.0",
+                    "description": "쓰이지 않음. 손절은 시스템이 ATR 기준으로 계산한다. 생략해도 된다.",
                 },
                 "take_profit_1": {
                     "type": "number",
@@ -113,7 +123,7 @@ CHIEF_TOOLS = [
                 },
                 "position_size_pct": {
                     "type": "number",
-                    "description": "BUY 시 포지션 사이즈 (시드 대비 %). confidence × 10, 최대 15.",
+                    "description": "쓰이지 않음. 포지션은 시스템이 손절폭과 보정 적중률로 계산한다.",
                 },
                 "holding_period_weeks": {
                     "type": "integer",
@@ -150,10 +160,21 @@ def _format_reports_as_prompt(
     debate_summary: str,
     weight_context: str = "",
     current_price: float = 0.0,        # ← v4.0 추가
+    past_context: str = "",            # ← 2026-09-18 추가: 과거 판단 교훈 (decision_memory)
+    screen_context: dict | None = None,  # ← 2026-09-21 추가: 오늘 이 종목이 뽑힌 사유
 ) -> str:
     lines = [
         f"=== 현재 시장 레짐: {regime.upper()} ===\n",
     ]
+
+    # ── 2026-09-21: 오늘 이 종목이 왜 후보에 올랐는가 (src/screening/screen_context.py)
+    # 투표 집계보다 먼저 읽게 둔다. 유니버스 110종목 중 이 종목만 올라온 이유가
+    # 판단의 출발점이기 때문이다 (doc/2026-09-21_agent-audit.md §2-2).
+    if screen_context:
+        from src.screening.screen_context import selection_reason
+        lines.append("[오늘 이 종목이 선정된 사유]")
+        lines.append(f"  {selection_reason(screen_context)}")
+        lines.append("")
 
     if current_price > 0:
         lines.append(f"[현재가] {current_price:,.0f}원 (거래 파라미터 계산 기준)\n")
@@ -173,6 +194,13 @@ def _format_reports_as_prompt(
     # 이 섹션이 생략됨 → v3.0과 완전히 동일한 동작.
     if weight_context:
         lines.append(weight_context)
+        lines.append("")
+
+    # ── 2026-09-18: 과거 판단 교훈 (src/data/decision_memory.py) ──────────────
+    # 신뢰도 섹션과 같은 자리. 투표 집계를 읽기 전에 "지난번엔 왜 틀렸나"를 먼저 보게 한다.
+    # 교훈이 없으면 빈 문자열이 와서 섹션이 생략된다 → 이전과 동일한 프롬프트.
+    if past_context:
+        lines.append(past_context)
         lines.append("")
 
     lines.append(f"=== 전문가 애널리스트 {len(reports)}명의 분석 결과 ===\n")
@@ -239,6 +267,27 @@ def _parse_tool_use_response(response) -> dict:
     )
 
 
+def _review_report(reason: str) -> AnalysisReport:
+    """LLM 출력을 못 읽었을 때. recommendation은 스키마상 HOLD지만 needs_review=True로
+    구분되어 리포트에 REVIEW로 표시되고, confidence 0.0이라 포지션 기록·신호 집계에서 빠진다.
+    (TradingAgents signal_processing: "an unrecognizable decision yields REVIEW rather than
+    a fabricated Hold, so a parsing failure is visible")"""
+    return AnalysisReport(
+        agent_name="chief_strategist",
+        confidence=0.0,
+        recommendation="HOLD",
+        needs_review=True,
+        reasoning=[
+            f"[REVIEW] 종합 판단 응답을 해석할 수 없음: {reason[:200]}",
+            "이 종목은 자동 판단이 아니라 사람의 확인이 필요하다",
+            "HOLD로 표시되지만 '관망 판단'이 아니라 '판단 없음'이다",
+        ],
+        data_sources=["chief_parse_failure", "review"],
+        prediction_basis=["응답 해석 실패로 근거 없음", "review"],
+        risk_factors=["종합 판단 부재"],
+    )
+
+
 # ─────────────────────────────────────────────────────────
 # 메인 함수
 # [v3.1 변경] weight_context 파라미터 추가
@@ -250,9 +299,25 @@ async def run_chief_strategist(
     debate_summary: str = "",
     weight_context: str = "",
     current_price: float = 0.0,        # ← v4.0 추가 (pipeline에서 최근 종가 주입)
+    past_context: str = "",            # ← 2026-09-18 추가 (pipeline에서 decision_memory 조회)
+    screen_context: dict | None = None,  # ← 2026-09-21 추가 (pipeline에서 스크리닝 사유 주입)
+    ticker: str = "",                    # ← 2026-09-21 추가 (ATR 손절 계산에 필요)
 ) -> AnalysisReport:
     if not reports:
-        raise ValueError("Chief Strategist에 전달할 에이전트 결과가 없습니다.")
+        logger.warning("[ChiefStrategist] 에이전트 결과 0건 — HOLD 폴백 반환")
+        return AnalysisReport(
+            agent_name="chief_strategist",
+            confidence=0.0,
+            recommendation="HOLD",
+            reasoning=[
+                "모든 에이전트가 타임아웃 또는 실패하여 분석 결과 없음",
+                "데이터 부족으로 방향성 판단 불가 — 기본 HOLD 유지",
+                "다음 파이프라인 실행 시 재분석 필요",
+            ],
+            data_sources=["no_agent_data", "fallback"],
+            prediction_basis=["에이전트 결과 없음으로 인한 대체값", "fallback"],
+            risk_factors=["전체 에이전트 실패 — 분석 근거 없음"],
+        )
 
     # 1. 프롬프트 구성 (v4.0: current_price 추가)
     formatted = _format_reports_as_prompt(
@@ -261,7 +326,34 @@ async def run_chief_strategist(
         debate_summary = debate_summary,
         weight_context = weight_context,
         current_price  = current_price,    # ← v4.0 추가
+        past_context   = past_context,     # ← 2026-09-18 추가
+        screen_context = screen_context,   # ← 2026-09-21 추가
     )
+
+    # 1-a-2. 최종 방향을 **파이썬 규칙이 먼저 정한다** (2026-09-21).
+    #   옛 구조는 프롬프트에 "BUY 가중합 > SELL + 0.2 → BUY"라고 써 두고 opus가 지키기를
+    #   기대했다. 운영 40건 재현 결과 그 규칙의 답은 BUY 15/SELL 20/HOLD 5인데 opus가
+    #   실제로 낸 것은 BUY 3/SELL 0/HOLD 37이었다 — 규칙이 지켜지지 않았다.
+    #   이제 방향·확신도는 decide()가 확정하고 opus는 그 이유를 쓴다
+    #   (doc/2026-09-21_agent-audit.md §1-10).
+    decided_rec, decided_conf, decision_detail = decide(reports)
+    decision_line = format_decision(decided_rec, decided_conf, decision_detail)
+    formatted = (
+        "[확정된 최종 방향 — 바꿀 수 없습니다]\n"
+        f"  {decision_line}\n"
+        "  당신의 일은 이 방향이 나온 이유를 쓰고, 반대 논거를 risk_factors에 담는 것입니다.\n"
+        "  recommendation·confidence를 다르게 제출해도 시스템이 위 값으로 되돌립니다.\n\n"
+        + formatted
+    )
+
+    # 1-b. 장중 실행이면 "즉시 매수" 금지 주의를 붙인다 (G5)
+    formatted += market_session_note()
+
+    # 1-c. 옵션 A — CHIEF_MODE=python_sonnet 이면 산술은 파이썬, 문장만 sonnet-5 (src/agents/chief_python.py)
+    if chief_mode() == "python_sonnet":
+        report = await run_python_sonnet(reports, formatted, current_price=current_price, ticker=ticker)
+        report.reasoning = list(report.reasoning) + ["[CHIEF_MODE=python_sonnet]"]
+        return report
 
     # 2. RAG 컨텍스트 주입 (v3.0과 동일)
     rag_context = get_context_for_agent(
@@ -284,14 +376,24 @@ async def run_chief_strategist(
         messages    = [{"role": "user", "content": formatted}],
     )
 
-    # 4. tool_use 응답 → dict 파싱 (v3.0과 동일)
-    result_dict = _parse_tool_use_response(response)
+    # 토큰·비용 집계 (src/utils/llm_budget.py). opus는 단가가 가장 높아
+    # 여기가 실행 비용의 큰 몫을 차지한다.
+    record_usage(CHIEF_MODEL, getattr(response, "usage", None))
+
+    # 4. tool_use 응답 → dict 파싱. 실패하면 HOLD로 날조하지 않고 REVIEW 표식 (G5)
+    try:
+        result_dict = _parse_tool_use_response(response)
+    except ValueError as e:
+        logger.error(f"[ChiefStrategist] 응답 해석 실패 → REVIEW: {e}")
+        return _review_report(str(e))
 
     # 5. AnalysisReport 객체 생성 (v4.0: 거래 파라미터 매핑 추가)
+    #   recommendation·confidence는 opus 응답이 아니라 decide() 결과를 쓴다.
+    #   opus가 다른 방향을 제출해도 여기서 되돌린다.
     report = AnalysisReport(
         agent_name          = "chief_strategist",
-        recommendation      = result_dict["recommendation"],
-        confidence          = float(result_dict["confidence"]),
+        recommendation      = decided_rec,
+        confidence          = decided_conf,
         reasoning           = result_dict["reasoning"],
         data_sources        = result_dict["data_sources"],
         prediction_basis    = result_dict["prediction_basis"],
@@ -309,4 +411,37 @@ async def run_chief_strategist(
         entry_strategy       = result_dict.get("entry_strategy"),
     )
 
+    report.reasoning = list(report.reasoning) + [decision_line]
+    _llm_rec = result_dict.get("recommendation")
+    if _llm_rec and _llm_rec != decided_rec:
+        logger.info(f"[ChiefStrategist] opus 제안 {_llm_rec} → 규칙 확정 {decided_rec}")
+        report.reasoning.append(f"[방향 확정] LLM 제안 {_llm_rec}을 규칙 결과 {decided_rec}으로 대체")
+
+    # 5-b. 옵션 A 섀도: opus가 낸 파라미터 6개 vs 파이썬 공식. candidate는 LLM 호출 없음(비용 0).
+    #      python -m src.utils.shadow_log chief_python_sonnet 으로 일치율을 본다.
+    _log_param_shadow(report, formatted, current_price)
+
+    # 6. 손절·익절·포지션 확정 (2026-09-21).
+    #    손절은 LLM이 제안한 -3~-6%가 아니라 종목 ATR 기준이다. 포지션은 보정 적중률
+    #    (G3, src/evaluation/calibration.py)과 리스크 한도 중 작은 쪽이다.
+    apply_atr_stop(report, ticker, current_price)
+
     return report
+
+
+def _log_param_shadow(report: AnalysisReport, formatted: str, current_price: float) -> None:
+    if not shadow_active("chief_python_sonnet"):
+        return
+    try:
+        h = input_hash("chief", formatted)
+        base = params_from_report(report)
+        if report.recommendation == "BUY" and current_price > 0:
+            cand = compute_trade_params(current_price, float(report.stop_loss_pct or DEFAULT_STOP_PCT))
+        else:
+            cand = {k: None for k in base}
+        log_shadow("chief_python_sonnet", "baseline", CHIEF_MODEL, h,
+                   {"params": base, "recommendation": report.recommendation}, 0, 0, 0)
+        log_shadow("chief_python_sonnet", "candidate", "python-formula", h,
+                   {"params": cand, "recommendation": report.recommendation}, 0, 0, 0)
+    except Exception as e:
+        logger.warning(f"[ChiefStrategist] 섀도 기록 실패(무시): {e}")

@@ -38,9 +38,39 @@ COLLECTIONS = {
 }
 
 
+EMBEDDING_MODEL = "text-embedding-3-small"
+
+
+class _BudgetedEmbeddings(OpenAIEmbeddings):
+    """토큰 수를 LLMBudget에 기록하는 OpenAIEmbeddings.
+
+    임베딩 API 응답은 LangChain 경로에서 usage를 노출하지 않으므로
+    tiktoken(cl100k_base)으로 입력 토큰을 직접 센다. 출력 토큰은 0.
+    집계 실패가 검색을 막으면 안 되므로 예외는 전부 삼킨다.
+    """
+
+    def _record(self, texts: list[str]) -> None:
+        try:
+            import tiktoken
+            from src.utils.llm_budget import get_budget
+            enc = tiktoken.get_encoding("cl100k_base")
+            n = sum(len(enc.encode(t)) for t in texts)
+            get_budget().record(EMBEDDING_MODEL, n, 0)
+        except Exception:
+            pass
+
+    def embed_documents(self, texts: list[str], *args, **kwargs) -> list[list[float]]:
+        self._record(texts)
+        return super().embed_documents(texts, *args, **kwargs)
+
+    def embed_query(self, text: str, *args, **kwargs) -> list[float]:
+        self._record([text])
+        return super().embed_query(text, *args, **kwargs)
+
+
 def get_embeddings() -> OpenAIEmbeddings:
-    """OpenAI text-embedding-3-small 임베딩 모델 반환."""
-    return OpenAIEmbeddings(model="text-embedding-3-small")
+    """OpenAI text-embedding-3-small 임베딩 모델 반환 (토큰 사용량 집계 포함)."""
+    return _BudgetedEmbeddings(model=EMBEDDING_MODEL)
 
 
 def get_collection(collection_name: str) -> Chroma:

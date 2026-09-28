@@ -1,0 +1,11 @@
+{
+  "rule_id": "example_rule",
+  "universe": {"kospi_rank": [1, 50], "kosdaq_rank": [1, 10],
+               "min_turnover_krw": 1000000000, "exclude": ["preferred"]},
+  "signal": {"name": "ret_20d", "params": {}},
+  "filters": [{"name": "ret_5d_max", "params": {"max": 0.20}}],
+  "candidate": {"percentile_max": 0.15},
+  "ranking": "signal asc",
+  "n_picks": 5,
+  "horizon": 10
+}

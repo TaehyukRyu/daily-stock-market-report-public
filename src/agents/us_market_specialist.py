@@ -1,12 +1,13 @@
 import asyncio
 import json
 from datetime import datetime
-from fastmcp import Client
+from src.utils.mcp_client import mcp_client
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from src.agents.base_agent import create_structured_agent
 from src.schemas.agent_output import AnalysisReport
 from src.rag.context_injection import get_context_for_agent, inject_context_into_prompt
+from src.utils.mcp_result import failure_note, parse_mcp_result
 
 
 US_MARKET_SYSTEM_PROMPT = "[REDACTED] Proprietary prompt engineering"
@@ -14,16 +15,12 @@ US_MARKET_SYSTEM_PROMPT = "[REDACTED] Proprietary prompt engineering"
 BIGTECH_TICKERS = ["AAPL", "MSFT", "NVDA", "GOOGL", "META"]
 
 
-def parse(raw) -> dict:
-    if hasattr(raw, "structured_content") and raw.structured_content:
-        return raw.structured_content
-    if hasattr(raw, "content") and raw.content:
-        return json.loads(raw.content[0].text)
-    return {}
-
+def parse(raw, *, tool: str = "us_market", context: str = "") -> dict:
+    """MCP 결과 파싱. 오류는 삼키지 않고 로그에 남긴다 (src/utils/mcp_result.py)."""
+    return parse_mcp_result(raw, tool=tool, context=context)
 
 async def _collect_us_market_data() -> dict:
-    async with Client("src/mcp_servers/us_market/server.py") as client:
+    async with mcp_client("src/mcp_servers/us_market/server.py") as client:
         sp500_task    = client.call_tool("get_sp500_data",       {"days": 30})
         vix_task      = client.call_tool("get_vix",              {})           # ✅ Fix: days 파라미터 제거
         treasury_task = client.call_tool("get_treasury_yields",  {})           # ✅ Fix: days 파라미터 제거
@@ -40,13 +37,15 @@ async def _collect_us_market_data() -> dict:
     sp500_raw, vix_raw, treasury_raw = results[0], results[1], results[2]
     stock_raws = results[3:]
 
-    sp500    = parse(sp500_raw)    if not isinstance(sp500_raw, Exception)    else {}
-    vix      = parse(vix_raw)      if not isinstance(vix_raw, Exception)      else {}
-    treasury = parse(treasury_raw) if not isinstance(treasury_raw, Exception) else {}
+    # 예외도 parse에 넘긴다 — parse_mcp_result가 로그에 남기고 {"error": ...}로 바꾼다.
+    # (이전: 예외면 {} → 로그도 없이 사라졌다)
+    sp500    = parse(sp500_raw)
+    vix      = parse(vix_raw)
+    treasury = parse(treasury_raw)
 
     stocks = {}
     for ticker, raw in zip(BIGTECH_TICKERS, stock_raws):
-        stocks[ticker] = parse(raw) if not isinstance(raw, Exception) else {}
+        stocks[ticker] = parse(raw)
 
     return {
         "sp500":   sp500,
@@ -62,6 +61,12 @@ def _format_prompt(data: dict) -> str:
 
 
 async def run_us_market_specialist() -> AnalysisReport:
+    """종목 무관 → 하루 1회만 LLM 호출, 이후 종목은 복사본 재사용 (G4, src/utils/daily_cache.py)."""
+    from src.utils.daily_cache import daily_cached
+    return await daily_cached("us_market_specialist", _run_us_market_specialist_uncached)
+
+
+async def _run_us_market_specialist_uncached() -> AnalysisReport:
     data      = await _collect_us_market_data()
     formatted = _format_prompt(data)
 

@@ -5,7 +5,7 @@ AI 투자 리포트 데일리 스케줄러 (APScheduler 3.x, AsyncIOScheduler)
 
 스케줄:
   06:00 KST 평일  — mention_tracker (뉴스 언급량 크롤링)
-  06:10 KST 평일  — pipeline.run_pipeline("005930") (분석 + 리포트 + Notion 발행)
+  06:10 KST 평일  — daily_runner.run_daily() (스크리닝 + 종목별 분석 + 통합 발행)
   15:30 KST 평일  — feedback_evaluator.evaluate_predictions() (D+1 채점)
   1/4/7/10월 1일  — universe_builder.build_universe() (분기 유니버스 갱신)
 
@@ -110,16 +110,22 @@ async def job_mention_tracker() -> None:
 
 
 async def job_run_pipeline() -> None:
-    """06:10 KST — 파이프라인 실행 (분석 + 리포트 + Notion 발행)."""
-    logger.info("[job_run_pipeline] 시작 (ticker=005930)")
+    """06:10 KST — 일일 실행 (스크리닝 → 종목별 분석 → 통합 발행).
+
+    [2026-09-14 CR-12] run_pipeline("005930") 하드코딩 → daily_runner.run_daily().
+      이 파일은 Docker(Dockerfile CMD)로만 뜨고 지금은 가동되지 않는다. 그런데
+      누가 컨테이너를 띄우면 스크리닝을 건너뛰고 삼성전자 1종목만 분석한 리포트가
+      Notion에 나갔다. 운영 경로(ci.yml → daily_runner)와 같은 흐름으로 맞춘다.
+    """
+    logger.info("[job_run_pipeline] 시작 (daily_runner.run_daily)")
     try:
-        from src.graph.pipeline import run_pipeline
-        result = await run_pipeline("005930")
-        strategy = result.get("final_strategy", "UNKNOWN")
-        regime   = result.get("current_regime", "unknown")
+        from src.daily_runner import run_daily
+        result = await run_daily()
+        health = (result or {}).get("health") or {}
         logger.info(
-            f"[job_run_pipeline] 완료 — "
-            f"최종전략={strategy}, 레짐={regime}"
+            f"[job_run_pipeline] 완료 — 선정 {len(result.get('selected') or [])}개, "
+            f"성공 {len(result.get('succeeded') or [])}개, "
+            f"건강도={'정상' if health.get('healthy', True) else '실패'}"
         )
     except Exception as e:
         logger.error(f"[job_run_pipeline] 실패: {type(e).__name__}: {e}", exc_info=True)
@@ -138,7 +144,12 @@ def job_feedback_evaluator() -> None:
 
 
 def job_universe_builder() -> None:
-    """1/4/7/10월 1일 — 분기 유니버스 갱신."""
+    """1/4/7/10월 1일 — 분기 유니버스 갱신.
+
+    [2026-09-14 CR-1] 같은 갱신이 daily_runner Step 0-a에도 들어갔다(운영 경로).
+    universe_refresh_due()가 "이번 분기에 이미 만들었나"를 보므로 둘 다 돌아도
+    중복 재구축은 일어나지 않는다. 이 잡은 Docker 운용 시의 보조 경로다.
+    """
     logger.info("[job_universe_builder] 시작 (분기 유니버스 갱신)")
     try:
         from src.universe.universe_builder import build_universe

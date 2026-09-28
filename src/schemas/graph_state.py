@@ -9,6 +9,13 @@ class GraphState(BaseModel):
     ticker:           str  = Field(default="005930")
     market_data:      dict = Field(default_factory=dict)
 
+    # 오늘 이 종목이 스크리닝에서 뽑힌 사유 (src/screening/screen_context.py).
+    # 뉴스 급증 배수·주요 공시 제목·1-C 헤드라인 해석이 들어온다.
+    # 이 필드가 없어서 "오늘 새 정보가 생긴 종목"을 골라 놓고 그 정보를 아무도
+    # 읽지 않았다 (doc/2026-09-21_agent-audit.md §2-2).
+    # 단독 디버그 실행에서는 빈 dict — 에이전트는 그때도 정상 동작해야 한다.
+    screen_context:   dict = Field(default_factory=dict)
+
     # operator.add → 노드가 반환할 때마다 리스트에 누적 (replace 불가)
     analysis_reports: Annotated[list[AnalysisReport], operator.add] = Field(default_factory=list)
 

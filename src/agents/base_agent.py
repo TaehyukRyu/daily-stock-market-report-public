@@ -20,7 +20,21 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 
-from src.schemas.agent_output import AnalysisReport
+from src.schemas.agent_output import AnalysisReport, ABSTAIN_RULE
+from src.utils.llm_budget import make_budget_callback
+from langchain_core.exceptions import OutputParserException
+from pydantic import ValidationError
+
+# 스키마 위반 재요청 횟수 (프로세스 누적). 실행 로그 요약용.
+SCHEMA_RETRY_COUNT = 0     # 피드백 재요청을 보낸 횟수
+SCHEMA_ABSTAIN_COUNT = 0   # 재요청도 실패해 폴백(abstain)으로 끝난 횟수
+
+# 일시 오류만 같은 프롬프트로 재시도한다. 스키마 위반(ValidationError)은 같은 프롬프트를
+# 반복해도 같은 답이 나오므로 제외하고, 아래 _invoke_with_schema_feedback이 1회만 피드백을 넣는다.
+TRANSIENT_ERRORS: tuple[type[BaseException], ...] = tuple(
+    getattr(__import__("openai"), n) for n in
+    ("APIConnectionError", "RateLimitError", "APITimeoutError", "InternalServerError")
+)
 from src.utils.resilience import (
     openai_breaker,
     anthropic_breaker,
@@ -56,19 +70,73 @@ class ResilientChain:
         breaker: pybreaker.CircuitBreaker,
         timeout_seconds: float = 60.0,
         task_name: str = "unknown_agent",
+        model_name: str = "unknown",
+        system_suffix: str = "",
+        schema_feedback: bool = False,
     ):
         self._chain = chain
         self._breaker = breaker
         self._timeout_seconds = timeout_seconds
         self._task_name = task_name
+        self._model_name = model_name
+        self._system_suffix = system_suffix        # 첫 SystemMessage 끝에 붙일 공통 규칙
+        self._schema_feedback = schema_feedback    # 스키마 위반 시 1회 피드백 재요청
+
+    def _with_suffix(self, messages: Any) -> Any:
+        if not self._system_suffix or not isinstance(messages, list) or not messages:
+            return messages
+        first = messages[0]
+        if isinstance(first, SystemMessage) and self._system_suffix not in str(first.content):
+            return [SystemMessage(content=str(first.content) + self._system_suffix), *messages[1:]]
+        return messages
+
+    async def _call_chain(self, messages: Any) -> Any:
+        # 토큰 집계 콜백 — with_structured_output(include_raw=False)라
+        # 반환값에 usage가 없어 콜백으로 가로챈다 (src/utils/llm_budget.py).
+        cb = make_budget_callback(self._model_name)
+        config = {"callbacks": [cb]} if cb is not None else None
+        return await with_timeout(
+            self._chain.ainvoke(messages, config=config) if config
+            else self._chain.ainvoke(messages),
+            self._timeout_seconds,
+            self._task_name,
+        )
+
+    async def _invoke_with_schema_feedback(self, messages: Any) -> Any:
+        """1차 호출 → 스키마 위반이면 위반 내용을 피드백으로 넣어 **1회만** 재요청.
+
+        같은 프롬프트 3회 반복(옛 with_retry)은 같은 답을 3번 받는 것이었다.
+        재요청도 실패하면 예외를 그대로 올려 폴백(abstain)으로 간다. 서킷 브레이커는
+        이 함수 바깥에서 최종 결과만 보므로 재요청이 실패 횟수를 두 배로 늘리지 않는다.
+        """
+        global SCHEMA_RETRY_COUNT, SCHEMA_ABSTAIN_COUNT
+        try:
+            return await self._call_chain(messages)
+        except (ValidationError, OutputParserException) as e:
+            if not self._schema_feedback:
+                raise
+            detail = str(e).splitlines()
+            summary = " / ".join(d.strip() for d in detail[:4])[:600]
+            SCHEMA_RETRY_COUNT += 1
+            logger.warning(f"[SchemaRetry] {self._task_name} — 스키마 위반, 피드백 재요청 1회: {summary[:200]}")
+            feedback = HumanMessage(content=(
+                "직전 응답이 출력 스키마를 위반해 거부됐다:\n" + summary +
+                "\n\n위 항목을 고쳐 다시 답하라. 'Field required'로 표시된 필수 필드(예: risk_factors, "
+                "최소 1개)는 반드시 채워라. 근거·출처를 각각 2개 이상 댈 수 없으면 data_sufficient=false로 "
+                "두고 그 두 목록만 비워라. 없는 수치를 지어내지 마라."
+            ))
+            try:
+                return await self._call_chain(list(messages) + [feedback])
+            except (ValidationError, OutputParserException) as e2:
+                SCHEMA_ABSTAIN_COUNT += 1
+                logger.error(f"[SchemaAbstain] {self._task_name} — 재요청도 스키마 위반, 폴백: {str(e2)[:200]}")
+                raise
 
     async def ainvoke(self, messages: Any) -> Any:
+        messages = self._with_suffix(messages)
+
         async def _invoke():
-            return await with_timeout(
-                self._chain.ainvoke(messages),
-                self._timeout_seconds,
-                self._task_name,
-            )
+            return await self._invoke_with_schema_feedback(messages)
 
         try:
             return await self._breaker.call_async(_invoke)
@@ -100,12 +168,14 @@ class ResilientChain:
             agent_name=self._task_name,
             confidence=0.0,
             recommendation="HOLD",
+            data_sufficient=False,
             reasoning=[
                 f"[폴백:{reason}] {self._task_name} 분석 실패",
                 "Circuit Breaker, Timeout, 또는 예외로 인해 에이전트를 실행할 수 없음",
                 "이 보고서는 신뢰할 수 없으므로 Quality Gate에서 자동 제외됨",
             ],
             data_sources=["error_fallback", "fallback"],
+            selection_rationale=f"[폴백:{reason}] 에이전트 실패로 종목 선정 불가",
             prediction_basis=["오류로 인한 대체값", "fallback"],
             risk_factors=["에이전트 오류로 분석 불가"],
         )
@@ -126,9 +196,22 @@ def create_structured_agent(
     호출 방식 (기존과 동일):
         agent = create_structured_agent()
         report = await agent.ainvoke([SystemMessage(...), HumanMessage(...)])
+
+    [why method="function_calling"]
+      langchain-openai 기본값 "json_schema"는 strict 모드라 Optional 필드가 많은
+      AnalysisReport(거래 파라미터 9개 포함) 스키마에서 큰 프롬프트(예: kr_market,
+      fundamental의 10종목 × 3 MCP 도구)일 때 LLM이 텍스트만 반환하고 구조화 출력을
+      누락 → "outputSchema defined but no structured output returned" 오류 발생.
+      function_calling(tool-calling API)은 일반 도구 호출 메커니즘을 사용해 더 안정적.
     """
     llm = ChatOpenAI(model=model, temperature=0)
-    chain_with_retry = llm.with_structured_output(AnalysisReport).with_retry(
+    # with_retry는 일시 오류(연결·429·5xx)만. 스키마 위반은 ResilientChain이 1회 피드백 재요청.
+    chain_with_retry = llm.with_structured_output(
+        AnalysisReport,
+        method="function_calling",
+        include_raw=False,
+    ).with_retry(
+        retry_if_exception_type=TRANSIENT_ERRORS,
         stop_after_attempt=3,
         wait_exponential_jitter=True,
     )
@@ -137,6 +220,9 @@ def create_structured_agent(
         breaker=openai_breaker,
         timeout_seconds=timeout_seconds,
         task_name=f"structured_agent({model})",
+        model_name=model,
+        system_suffix=ABSTAIN_RULE,
+        schema_feedback=True,
     )
 
 
@@ -163,6 +249,7 @@ def create_anthropic_agent(
         breaker=anthropic_breaker,
         timeout_seconds=timeout_seconds,
         task_name=f"anthropic_agent({model})",
+        model_name=model,
     )
 
 
@@ -190,6 +277,7 @@ def create_anthropic_text_agent(
         breaker=anthropic_breaker,
         timeout_seconds=60.0,
         task_name=f"anthropic_text_agent({model})",
+        model_name=model,
     )
 
 

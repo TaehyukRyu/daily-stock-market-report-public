@@ -1,3 +1,11 @@
+# ── stdio 서버 가드 (2026-09-11) ─────────────────────────────────────────
+# 이 파일이 서브프로세스로 실행될 때 stdout은 JSON-RPC 채널이다. pykrx는 **import 시점**에
+# "KRX 로그인 시도..."를 print()로 stdout에 찍으므로(2차 CI 실행에서도 80건 오염), 어떤 import보다
+# 먼저 print를 stderr로 돌린다. 모듈로 import될 때(테스트)는 손대지 않는다.
+if __name__ == "__main__":
+    import builtins as _b, functools as _ft, sys as _sys
+    _b.print = _ft.partial(_b.print, file=_sys.stderr)
+
 import os
 import requests as _requests
 
@@ -18,10 +26,10 @@ def get_recent_trading_date() -> str:
 
     today = datetime.now()
 
-    if today.weekday == 5:
+    # weekday()는 메서드 — 호출하지 않으면 메서드 객체와 5/6을 비교해 항상 False가 된다.
+    if today.weekday() == 5:        # 토요일 → 금요일
         today -= timedelta(days=1)
-
-    elif today.weekday == 6:
+    elif today.weekday() == 6:      # 일요일 → 금요일
         today -= timedelta(days=2)
 
     return today.strftime("%Y%m%d")
@@ -74,50 +82,56 @@ def get_stock_price(ticker: str, days: int = 30) -> dict:
 
 
 
+# ── 2026-09-11 복구: finance.naver.com/item/main.naver 가 Npay 증권(SPA)으로 개편되어
+#    <table>이 0개다 ("테이블 구조 변경됨" / "PER 추출 실패"). 모바일 JSON API로 옮긴다.
+NAVER_STOCK_API = "https://m.stock.naver.com/api/stock/{code}/{path}"
+_NAVER_HEADERS  = {"User-Agent": "Mozilla/5.0"}
+
+
+def _naver_num(text) -> float | None:
+    """'11.64배' '22,292원' '0.64%' '+4,266,985' → float. 못 읽으면 None."""
+    if text is None:
+        return None
+    s = str(text).strip()
+    for junk in ("배", "원", "%", ",", "+"):
+        s = s.replace(junk, "")
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _parse_trend_rows(rows: list, days: int) -> list[dict]:
+    """/api/stock/{code}/trend 응답 → [{close, foreign_net, institution_net, date}] (최신순)."""
+    records = []
+    for r in rows or []:
+        close = _naver_num(r.get("closePrice"))
+        fnet  = _naver_num(r.get("foreignerPureBuyQuant"))
+        onet  = _naver_num(r.get("organPureBuyQuant"))
+        if close is None or fnet is None or onet is None:
+            continue
+        records.append({
+            "close":           int(close),
+            "foreign_net":     int(fnet),
+            "institution_net": int(onet),
+            "date":            str(r.get("bizdate") or ""),
+        })
+        if len(records) >= days:
+            break
+    return records
+
+
 @mcp.tool()
 def get_investor_trends(ticker: str, days: int = 10) -> dict:
-    """외국인/기관 수급 데이터 조회 (네이버 증권 크롤링)"""
+    """외국인/기관 수급 데이터 조회 (네이버 증권 모바일 API /trend)"""
     try:
         import requests
-        from bs4 import BeautifulSoup
-
-        headers = {"User-Agent": "Mozilla/5.0"}
-        url = f"https://finance.naver.com/item/main.naver?code={ticker}"
-        resp = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        tables = soup.find_all("table")
-        if len(tables) < 4:
-            return {"error": "테이블 구조 변경됨"}
-
-        table = tables[3]
-        rows = table.find_all("tr")
-
-        records = []
-        for row in rows:
-            cells = row.find_all("td")
-            if not cells:
-                continue
-            texts = [c.get_text(strip=True) for c in cells]
-            texts = [t for t in texts if t]
-
-            # 첫 번째 셀이 종가(숫자+콤마)인 행만 처리
-            if len(texts) >= 4:
-                try:
-                    close = int(texts[0].replace(",", ""))
-                    foreign_net = int(texts[2].replace("+", "").replace(",", ""))
-                    institution_net = int(texts[3].replace("+", "").replace(",", ""))
-                    records.append({
-                        "close": close,
-                        "foreign_net": foreign_net,
-                        "institution_net": institution_net,
-                    })
-                except ValueError:
-                    continue
-
-            if len(records) >= days:
-                break
-
+        resp = requests.get(NAVER_STOCK_API.format(code=ticker, path="trend"),
+                            params={"pageSize": max(days, 10)}, headers=_NAVER_HEADERS, timeout=10)
+        resp.raise_for_status()
+        records = _parse_trend_rows(resp.json(), days)
+        if not records:
+            return {"error": f"{ticker} 수급 API 응답에 유효한 행 없음"}
         return {"ticker": ticker, "count": len(records), "data": records}
 
     except Exception as e:
@@ -233,59 +247,99 @@ def get_analyst_reports(ticker: str, days: int = 90) -> dict:
 
 
 @mcp.tool()
-def get_financials(ticker: str) -> dict:
+def _withhold_if_past(as_of: str | None, label: str) -> dict | None:
+    """G2: 현재 페이지 값만 있는 소스는 과거 as_of 실행에 제공하지 않는다.
+    src/utils/date_window.withhold_live_value와 같은 규칙 — 이 서버는 stdio 서브프로세스라
+    src 패키지를 import하지 않고 인라인으로 둔다."""
+    if not as_of:
+        return None
+    from datetime import date as _date
+    today = _date.today().isoformat()
+    if as_of >= today:
+        return None
+    return {
+        "withheld": True, "as_of": as_of,
+        "error": (f"{label}: point-in-time 값이 없는 소스(현재 페이지 기준)라 {as_of} 시점 분석에 "
+                  f"제공하지 않는다. 오늘({today}) 값을 과거 실행에 넣으면 사후 정보가 섞인다."),
+    }
+
+
+def _parse_integration(ticker: str, d: dict) -> dict:
+    """/api/stock/{code}/integration → get_financials 반환 스키마 (필드명은 옛 크롤러와 동일)."""
+    if not isinstance(d, dict) or not d.get("stockName"):
+        return {"error": f"{ticker} 네이버 증권 API 응답에 종목 정보 없음"}
+    infos = {ti.get("code"): ti.get("value") for ti in (d.get("totalInfos") or []) if isinstance(ti, dict)}
+    per, pbr, eps = _naver_num(infos.get("per")), _naver_num(infos.get("pbr")), _naver_num(infos.get("eps"))
+    if per is None and pbr is None and eps is None:
+        return {"error": f"{ticker} 네이버 증권 API에서 PER/PBR/EPS 추출 실패"}
+    bps, dps  = _naver_num(infos.get("bps")), _naver_num(infos.get("dividend"))
+    div_yield = _naver_num(infos.get("dividendYieldRatio"))
+    cns_per, cns_eps = _naver_num(infos.get("cnsPer")), _naver_num(infos.get("cnsEps"))
+    cns = d.get("consensusInfo") or {}
+    return {
+        "ticker":    ticker,
+        "name":      d.get("stockName"),
+        "date":      datetime.now().strftime("%Y-%m-%d"),
+        "per":       round(per, 2)       if per       is not None else None,
+        "pbr":       round(pbr, 2)       if pbr       is not None else None,
+        "eps":       int(eps)            if eps       is not None else None,
+        "bps":       int(bps)            if bps       is not None else None,
+        "dps":       int(dps)            if dps       is not None else None,
+        "div_yield": round(div_yield, 2) if div_yield is not None else None,
+        "cns_per":   round(cns_per, 2)   if cns_per   is not None else None,
+        "cns_eps":   int(cns_eps)        if cns_eps   is not None else None,
+        "target_price_mean": _naver_num(cns.get("priceTargetMean")),
+        "recomm_mean":       _naver_num(cns.get("recommMean")),
+        "source":    "naver_stock_api",
+    }
+
+
+@mcp.tool()
+def get_financials(ticker: str, as_of: str | None = None) -> dict:
     """
     종목의 PER/PBR/EPS/배당수익률을 조회합니다.
-    pykrx get_market_fundamental() 사용 — API 키 불필요
+    데이터 소스: 네이버 금융 종목 페이지 (finance.naver.com/item/main.naver)
+
+    pykrx get_market_fundamental은 KRX OTP 엔드포인트 변경으로 빈 응답을 받아
+    JSON 파싱이 실패하므로 네이버 금융 크롤링으로 대체한다.
 
     Args:
         ticker: 종목 코드 (예: "005930")
 
     Returns:
-        PER, PBR, EPS, DPS, 배당수익률 (최근 거래일 기준)
+        PER, PBR, EPS, 컨센서스 PER/EPS, 배당수익률 (현재 페이지 기준)
+        as_of가 과거 날짜면 {"withheld": True, "error": ...} (G2 point-in-time)
     """
+    w = _withhold_if_past(as_of, "get_financials")
+    if w:
+        return w
     try:
-        date = get_recent_trading_date()
-        # 최근 5거래일 조회 후 가장 최근 유효 데이터 사용
-        start_date = (datetime.now() - timedelta(days=10)).strftime("%Y%m%d")
-
-        df = stock.get_market_fundamental(start_date, date, ticker)
-
-        if df.empty:
-            return {"error": f"{ticker} 펀더멘털 데이터 없음"}
-
-        # 마지막 유효 행
-        latest = df.iloc[-1]
-        ticker_name = stock.get_market_ticker_name(ticker)
-
-        return {
-            "ticker":       ticker,
-            "name":         ticker_name,
-            "date":         df.index[-1].strftime("%Y-%m-%d"),
-            "per":          round(float(latest["PER"]), 2),
-            "pbr":          round(float(latest["PBR"]), 2),
-            "eps":          int(latest["EPS"]),
-            "bps":          int(latest["BPS"]),
-            "dps":          int(latest["DPS"]),
-            "div_yield":    round(float(latest["DIV"]), 2),
-        }
+        import requests
+        resp = requests.get(NAVER_STOCK_API.format(code=ticker, path="integration"),
+                            headers=_NAVER_HEADERS, timeout=10)
+        resp.raise_for_status()
+        return _parse_integration(ticker, resp.json())
 
     except Exception as e:
         return {"error": str(e)}
 
 
 @mcp.tool()
-def get_consensus_estimates(ticker: str) -> dict:
+def get_consensus_estimates(ticker: str, as_of: str | None = None) -> dict:
     """
     종목의 실적 컨센서스(매출/영업이익/EPS 추정치)를 조회합니다.
     한경컨센서스 크롤링 — get_analyst_reports와 동일 소스
 
     Args:
         ticker: 종목 코드 (예: "005930")
+        as_of:  과거 날짜면 제공하지 않는다 (G2 point-in-time)
 
     Returns:
         연간/분기 실적 추정치 + 컨센서스 방향 (상향/하향/유지)
     """
+    w = _withhold_if_past(as_of, "get_consensus_estimates")
+    if w:
+        return w
     try:
         import requests
         from bs4 import BeautifulSoup

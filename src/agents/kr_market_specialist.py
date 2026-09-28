@@ -12,13 +12,14 @@ KR Market Specialist Agent
 import asyncio
 import json
 from datetime import datetime
-from fastmcp import Client
+from src.utils.mcp_client import mcp_client
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from src.agents.base_agent import create_structured_agent
 from src.schemas.agent_output import AnalysisReport
 from src.rag.context_injection import get_context_for_agent, inject_context_into_prompt
 from src.universe.universe_builder import load_universe
+from src.utils.mcp_result import failure_note, parse_mcp_result
 
 
 # ─────────────────────────────────────────────────────────
@@ -43,11 +44,14 @@ KR_MARKET_SYSTEM_PROMPT = "[REDACTED] Proprietary prompt engineering"
 # Step 1: 데이터 수집
 # ─────────────────────────────────────────────────────────
 
-async def _collect_kr_market_data() -> dict:
-    """N개 종목 × 3개 도구 MCP 호출을 병렬로 실행합니다."""
-    tickers = _get_tickers()
+async def _collect_kr_market_data(target_ticker: str | None = None) -> dict:
+    """대상 종목 1개 × 3개 도구 MCP 호출을 병렬로 실행합니다.
 
-    async with Client("src/mcp_servers/krx_market/server.py") as krx_client:
+    target_ticker가 None인 경우(단독 디버그 실행 등)에는 유니버스 1순위로 폴백.
+    """
+    tickers = [target_ticker] if target_ticker else _get_tickers()[:1]
+
+    async with mcp_client("src/mcp_servers/krx_market/server.py") as krx_client:
         price_tasks = [
             krx_client.call_tool("get_stock_price", {"ticker": t, "days": 10})
             for t in tickers
@@ -61,19 +65,21 @@ async def _collect_kr_market_data() -> dict:
             for t in tickers
         ]
 
-        results = await asyncio.gather(*price_tasks, *trend_tasks, *report_tasks)
+        # return_exceptions=True: 일부 MCP 도구가 ToolError(스키마 검증 실패)
+        # 등으로 raise해도 다른 데이터는 살리고 진행 (개별 ticker만 손실)
+        results = await asyncio.gather(
+            *price_tasks, *trend_tasks, *report_tasks,
+            return_exceptions=True,
+        )
 
     n = len(tickers)
     price_raws  = results[:n]
     trend_raws  = results[n:n*2]
     report_raws = results[n*2:]
 
-    def parse(raw) -> dict:
-        if hasattr(raw, "structured_content") and raw.structured_content:
-            return raw.structured_content
-        if hasattr(raw, "content") and raw.content:
-            return json.loads(raw.content[0].text)
-        return {}
+    def parse(raw, *, tool: str = "krx_market", context: str = "") -> dict:
+        """MCP 결과 파싱. 오류는 삼키지 않고 로그에 남긴다 (src/utils/mcp_result.py)."""
+        return parse_mcp_result(raw, tool=tool, context=context)
 
     ticker_data = {}
     for i, ticker in enumerate(tickers):
@@ -99,15 +105,18 @@ def _format_prompt(ticker_data: dict) -> str:
 # Step 3: 에이전트 실행
 # ─────────────────────────────────────────────────────────
 
-async def run_kr_market_specialist() -> AnalysisReport:
-    """KR Market Specialist 에이전트 실행 진입점."""
-    data      = await _collect_kr_market_data()
+async def run_kr_market_specialist(target_ticker: str | None = None) -> AnalysisReport:
+    """KR Market Specialist 에이전트 실행 진입점.
+
+    target_ticker: 파이프라인이 다루는 핵심 ticker. 이 종목만 단독 분석.
+    """
+    data      = await _collect_kr_market_data(target_ticker=target_ticker)
     formatted = _format_prompt(data)
 
     rag_context = get_context_for_agent(
         agent_name="kr_market_specialist",
         state_vars={
-            "ticker": _get_tickers()[0],
+            "ticker": target_ticker or _get_tickers()[0],
             "date":   datetime.now().strftime("%Y-%m-%d"),
         },
     )

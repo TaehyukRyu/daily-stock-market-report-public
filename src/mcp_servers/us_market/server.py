@@ -1,3 +1,11 @@
+# ── stdio 서버 가드 (2026-09-11) ─────────────────────────────────────────
+# 이 파일이 서브프로세스로 실행될 때 stdout은 JSON-RPC 채널이다. pykrx는 **import 시점**에
+# "KRX 로그인 시도..."를 print()로 stdout에 찍으므로(2차 CI 실행에서도 80건 오염), 어떤 import보다
+# 먼저 print를 stderr로 돌린다. 모듈로 import될 때(테스트)는 손대지 않는다.
+if __name__ == "__main__":
+    import builtins as _b, functools as _ft, sys as _sys
+    _b.print = _ft.partial(_b.print, file=_sys.stderr)
+
 from fastmcp import FastMCP
 from dotenv import load_dotenv
 import yfinance as yf

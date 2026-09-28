@@ -1,3 +1,10 @@
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
+
+# costly = 실제 유료 API를 호출하는 테스트. tests/conftest.py가 모듈 이름을 보고
+# 자동으로 붙인다. CI 기본 실행은 `-m "not costly"` (252건 / 약 30초 / 과금 0).
+# 전체 실행은 78분이 걸리고 OpenAI 호출 82건이 과금된다.
+markers = [
+    "costly: 실제 유료 API를 호출한다. CI 기본 실행에서는 제외된다.",
+]

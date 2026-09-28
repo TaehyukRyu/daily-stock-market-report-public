@@ -2,6 +2,15 @@
 News & Economy MCP Server
 담당: 뉴스, 환율, 한국 기준금리, 정책 동향
 """
+
+# ── stdio 서버 가드 (2026-09-11) ─────────────────────────────────────────
+# 이 파일이 서브프로세스로 실행될 때 stdout은 JSON-RPC 채널이다. pykrx는 **import 시점**에
+# "KRX 로그인 시도..."를 print()로 stdout에 찍으므로(2차 CI 실행에서도 80건 오염), 어떤 import보다
+# 먼저 print를 stderr로 돌린다. 모듈로 import될 때(테스트)는 손대지 않는다.
+if __name__ == "__main__":
+    import builtins as _b, functools as _ft, sys as _sys
+    _b.print = _ft.partial(_b.print, file=_sys.stderr)
+
 import json
 from openai import OpenAI
 
@@ -50,18 +59,52 @@ POLICY_QUERIES = {
 }
 
 
+# 직전 nano 호출의 토큰 사용량. 이 서버는 stdio 서브프로세스라 파이프라인의
+# LLMBudget(프로세스 전역)에 닿지 못한다. 결과 dict의 "llm_usage"로 실어 보내고
+# 호출자(sentiment_analyst)가 기록한다.
+_LAST_NANO_USAGE: dict | None = None
+
+
+def _remember_nano_usage(response) -> None:
+    global _LAST_NANO_USAGE
+    u = getattr(response, "usage", None)
+    if u is None:
+        return
+    _LAST_NANO_USAGE = {
+        "model":         "gpt-4.1-nano",
+        "input_tokens":  int(getattr(u, "prompt_tokens", 0) or 0),
+        "output_tokens": int(getattr(u, "completion_tokens", 0) or 0),
+    }
+
+
 def _score_relevance_batch(articles: list[dict], min_score: float) -> list[dict]:
-    """GPT-4.1-nano로 기사 목록 전체를 한 번에 스코어링합니다."""
+    """
+    GPT-4.1-nano로 기사 목록 전체를 한 번에 스코어링합니다.
+
+    실패 모드(절대 raise 금지 — MCP 도구 전체 중단 방지):
+      - OPENAI_API_KEY 누락           → 원본 articles 반환 (scored=False)
+      - OpenAI 클라이언트 초기화 실패  → 동일
+      - API 호출/JSON 파싱 실패        → 동일
+    """
     if not articles:
         return articles
 
-    client = OpenAI()
+    # ── 환경변수 사전 점검 (CI에서 secret 누락 시 명확한 로그) ──
+    if not os.getenv("OPENAI_API_KEY"):
+        print("[스코어링 Fallback] OPENAI_API_KEY 미설정 — scored=False로 통과")
+        for a in articles:
+            a.setdefault("relevance_score", None)
+            a["scored"] = False
+        return articles
 
-    titles_text = "\n".join(
-        f"{i+1}. {a['title']}" for i, a in enumerate(articles)
-    )
+    try:
+        client = OpenAI()                          # ← try 안으로 이동
 
-    prompt = f"""다음 뉴스 기사 제목들 각각에 대해, 한국 주식시장 투자 판단에 영향을 줄 가능성을 0.0~1.0으로 평가하라.
+        titles_text = "\n".join(
+            f"{i+1}. {a['title']}" for i, a in enumerate(articles)
+        )
+
+        prompt = f"""다음 뉴스 기사 제목들 각각에 대해, 한국 주식시장 투자 판단에 영향을 줄 가능성을 0.0~1.0으로 평가하라.
 
 점수 기준:
 0.7~1.0: 직접적 영향 (금리/환율/기업실적/정책결정/무역/규제)
@@ -73,7 +116,6 @@ def _score_relevance_batch(articles: list[dict], min_score: float) -> list[dict]
 
 {titles_text}"""
 
-    try:
         response = client.chat.completions.create(
             model="gpt-4.1-nano",
             messages=[{"role": "user", "content": prompt}],
@@ -82,6 +124,7 @@ def _score_relevance_batch(articles: list[dict], min_score: float) -> list[dict]
         )
 
         raw = response.choices[0].message.content.strip()
+        _remember_nano_usage(response)
         scores = json.loads(raw)
 
         if len(scores) != len(articles):
@@ -97,7 +140,11 @@ def _score_relevance_batch(articles: list[dict], min_score: float) -> list[dict]
         return scored_articles
 
     except Exception as e:
-        print(f"[스코어링 Fallback] {e}")
+        print(f"[스코어링 Fallback] {type(e).__name__}: {e}")
+        # 폴백: 점수 없이 원본 반환. min_score 필터링은 건너뜀.
+        for a in articles:
+            a.setdefault("relevance_score", None)
+            a["scored"] = False
         return articles
 
 
@@ -228,14 +275,17 @@ def _search_by_category(
                 seen_links.add(link)
                 all_articles.append(item)
 
+    global _LAST_NANO_USAGE
+    _LAST_NANO_USAGE = None
     scored_articles = _score_relevance_batch(all_articles, min_score=min_score)
     actually_scored = scored_articles[0]["scored"] if scored_articles else False
 
     return {
-        "articles": scored_articles,
-        "count":    len(scored_articles),
-        "mode":     "category",
-        "scored":   actually_scored,
+        "articles":  scored_articles,
+        "count":     len(scored_articles),
+        "mode":      "category",
+        "scored":    actually_scored,
+        "llm_usage": _LAST_NANO_USAGE,
         "phase":    "3 완료 — 카테고리 병렬 수집 + 중복 제거 + nano 관련성 스코어링",
         "errors":   errors,
     }
@@ -286,10 +336,10 @@ def search_news(
 
         try:
             resp = requests.get(
-                "https://openapi.naver.com/v1/search/news.json",
+                "https://naverapihub.apigw.ntruss.com/search/v1/news",
                 headers={
-                    "X-Naver-Client-Id":     NAVER_CLIENT_ID,
-                    "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
+                    "X-NCP-APIGW-API-KEY-ID": NAVER_CLIENT_ID,
+                    "X-NCP-APIGW-API-KEY":    NAVER_CLIENT_SECRET,
                 },
                 params={"query": query, "display": max_results, "sort": "date"},
                 timeout=10,

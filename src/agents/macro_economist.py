@@ -8,12 +8,13 @@ Macro Economist Agent
 import asyncio
 import json
 from datetime import datetime
-from fastmcp import Client
+from src.utils.mcp_client import mcp_client
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from src.agents.base_agent import create_structured_agent
 from src.schemas.agent_output import AnalysisReport
 from src.rag.context_injection import get_context_for_agent, inject_context_into_prompt
+from src.utils.mcp_result import failure_note, has_error, parse_mcp_result
 
 
 # ─────────────────────────────────────────────────────────
@@ -31,7 +32,7 @@ async def _collect_macro_data() -> dict:
     """6개 MCP 도구를 병렬 호출하여 거시경제 데이터를 수집합니다."""
 
     # US Market MCP: 3개 도구 병렬 호출
-    async with Client("src/mcp_servers/us_market/server.py") as us_client:
+    async with mcp_client("src/mcp_servers/us_market/server.py") as us_client:
         yields_raw, vix_raw, commodities_raw = await asyncio.gather(
             us_client.call_tool("get_treasury_yields", {}),
             us_client.call_tool("get_vix", {}),
@@ -41,7 +42,7 @@ async def _collect_macro_data() -> dict:
         )
 
     # News & Economy MCP: 3개 도구 병렬 호출
-    async with Client("src/mcp_servers/news_economy/server.py") as news_client:
+    async with mcp_client("src/mcp_servers/news_economy/server.py") as news_client:
         exchange_raw, interest_raw, policy_raw = await asyncio.gather(
             news_client.call_tool("get_exchange_rate", {"days": 30}),
             news_client.call_tool("get_interest_rate", {"periods": 30}),
@@ -49,12 +50,10 @@ async def _collect_macro_data() -> dict:
         )
 
     # FastMCP call_tool은 TextContent 객체를 반환하므로 JSON 파싱 필요
-    def parse(raw) -> dict:
-        if hasattr(raw, "structured_content") and raw.structured_content:
-            return raw.structured_content
-        if hasattr(raw, "content") and raw.content:
-            return json.loads(raw.content[0].text)
-        return {}
+    def parse(raw, *, tool: str = "macro_mcp", context: str = "") -> dict:
+        """MCP 결과 파싱. 오류는 삼키지 않고 로그에 남긴다 (src/utils/mcp_result.py)."""
+        return parse_mcp_result(raw, tool=tool, context=context)
+
     return {
         "treasury_yields": parse(yields_raw),
         "vix":             parse(vix_raw),
@@ -79,6 +78,12 @@ def _format_prompt(data: dict) -> str:
 # ─────────────────────────────────────────────────────────
 
 async def run_macro_economist() -> AnalysisReport:
+    """종목 무관 → 하루 1회만 LLM 호출, 이후 종목은 복사본 재사용 (G4, src/utils/daily_cache.py)."""
+    from src.utils.daily_cache import daily_cached
+    return await daily_cached("macro_economist", _run_macro_economist_uncached)
+
+
+async def _run_macro_economist_uncached() -> AnalysisReport:
     data = await _collect_macro_data()
     formatted = _format_prompt(data)
 

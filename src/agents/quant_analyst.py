@@ -10,13 +10,14 @@ Quant Analyst Agent
 import asyncio
 import json
 from datetime import datetime
-from fastmcp import Client
+from src.utils.mcp_client import mcp_client
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from src.agents.base_agent import create_structured_agent
 from src.schemas.agent_output import AnalysisReport
 from src.rag.context_injection import get_context_for_agent, inject_context_into_prompt
 from src.universe.universe_builder import load_universe
+from src.utils.mcp_result import parse_mcp_result
 
 
 # ─────────────────────────────────────────────────────────
@@ -30,12 +31,9 @@ def _get_tickers(n: int = 10) -> list[str]:
 QUANT_SYSTEM_PROMPT = "[REDACTED] Proprietary prompt engineering"
 
 
-def parse(raw) -> dict:
-    if hasattr(raw, "structured_content") and raw.structured_content:
-        return raw.structured_content
-    if hasattr(raw, "content") and raw.content:
-        return json.loads(raw.content[0].text)
-    return {}
+def parse(raw, *, tool: str = "krx_market", context: str = "") -> dict:
+    """MCP 결과 파싱. 오류는 삼키지 않고 로그에 남긴다 (src/utils/mcp_result.py)."""
+    return parse_mcp_result(raw, tool=tool, context=context)
 
 
 def _calculate_momentum(price_data: dict) -> dict:
@@ -98,10 +96,14 @@ def _extract_target_price(analyst_data: dict) -> dict:
         return {"error": str(e)}
 
 
-async def _collect_quant_data() -> dict:
-    tickers = _get_tickers()
+async def _collect_quant_data(target_ticker: str | None = None) -> dict:
+    """대상 종목 1개의 정량 데이터(가격/애널리스트)를 수집합니다.
 
-    async with Client("src/mcp_servers/krx_market/server.py") as client:
+    target_ticker가 None인 경우(단독 디버그 실행 등)에는 유니버스 1순위로 폴백.
+    """
+    tickers = [target_ticker] if target_ticker else _get_tickers()[:1]
+
+    async with mcp_client("src/mcp_servers/krx_market/server.py") as client:
         price_tasks = [
             client.call_tool("get_stock_price",    {"ticker": t, "days": 120})
             for t in tickers
@@ -121,8 +123,9 @@ async def _collect_quant_data() -> dict:
         price_raw   = price_results[i]
         analyst_raw = analyst_results[i]
 
-        price_data   = parse(price_raw)   if not isinstance(price_raw,   Exception) else {}
-        analyst_data = parse(analyst_raw) if not isinstance(analyst_raw, Exception) else {}
+        # 예외도 parse에 넘긴다 — parse_mcp_result가 로그에 남긴다 (이전: {}로 조용히 사라짐)
+        price_data   = parse(price_raw)
+        analyst_data = parse(analyst_raw)
 
         quant_data[ticker] = {
             "name":     price_data.get("name", ticker),
@@ -138,14 +141,18 @@ def _format_prompt(data: dict) -> str:
     return ""
 
 
-async def run_quant_analyst() -> AnalysisReport:
-    data      = await _collect_quant_data()
+async def run_quant_analyst(target_ticker: str | None = None) -> AnalysisReport:
+    """Quant Analyst 에이전트 실행 진입점.
+
+    target_ticker: 파이프라인이 다루는 핵심 ticker. 이 종목만 단독 분석.
+    """
+    data      = await _collect_quant_data(target_ticker=target_ticker)
     formatted = _format_prompt(data)
 
     rag_context = get_context_for_agent(
         agent_name="quant_analyst",
         state_vars={
-            "ticker": _get_tickers()[0],
+            "ticker": target_ticker or _get_tickers()[0],
             "date":   datetime.now().strftime("%Y-%m-%d"),
         },
     )
@@ -157,4 +164,13 @@ async def run_quant_analyst() -> AnalysisReport:
         HumanMessage(content=formatted),
     ])
     report.agent_name = "quant_analyst"
+
+    # LLM이 Optional 필드인 selection_rationale을 누락하는 경우가 있어 보강한다.
+    # 종목 단위 분석이므로 항상 채워져 있어야 한다.
+    if not report.selection_rationale:
+        report.selection_rationale = (
+            report.reasoning[-1] if report.reasoning
+            else "정량 데이터 기준 종목 선정 보류"
+        )
+
     return report

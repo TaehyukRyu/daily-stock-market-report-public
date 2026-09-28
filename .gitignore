@@ -5,10 +5,8 @@ __pycache__/
 .DS_Store
 .venv/
 
-data/chroma_db/
-data/mentions.db
-data/reports/
-data/signals/
+# 런타임 데이터 전체 (DB 42MB, 백테스트 가격 캐시 60MB, 리포트·시그널). 추적 대상 없음.
+/data/
 logs/
 .claude/
 

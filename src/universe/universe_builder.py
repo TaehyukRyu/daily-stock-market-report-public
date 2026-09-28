@@ -165,17 +165,57 @@ def save_universe(tickers: list[str], date: str) -> None:
 
 _FALLBACK_TICKERS = ["005930", "000660", "005380", "035420", "051910"]
 
+# 분기 갱신 대상 월 (2026-09-14 결정 3-4b)
+QUARTER_MONTHS = (1, 4, 7, 10)
+
 
 def load_universe() -> list[str]:
     """
     저장된 유니버스를 로드합니다.
-    파일이 없으면 폴백 반환.
-    에이전트에서: from src.universe.universe_builder import load_universe
+
+    [2026-09-14 결정 3-4b] 진실의 원천은 DB(universe_snapshots, source='build')다.
+      1순위 DB 최신 build 판 → 2순위 universe_config.json → 3순위 폴백 5개
+
+    [왜 DB로 옮겼나]
+      universe_config.json은 git 추적 파일이라 CI에서 갱신하면 커밋·푸시 권한이 필요하고
+      충돌도 난다. DB는 Actions 캐시로 실행 간에 이어지므로 갱신 결과가 자연스럽게 남는다.
+      JSON은 읽기 전용 폴백으로 남겨 둔다 — DB가 비어 있는 새 환경에서도 돌아야 한다.
+
+    이 함수 하나만 바꾸면 되는 이유: 에이전트 5개·screener·daily_runner·security 화이트리스트가
+    전부 이 함수를 거친다 (2026-09-14 전수 확인).
     """
+    try:
+        from src.evaluation.random_control import latest_built_universe
+        _, tickers = latest_built_universe()
+        if tickers:
+            return tickers
+    except Exception as e:            # DB 없음·스키마 없음 등 — JSON으로 떨어진다
+        print(f"[universe] DB 조회 실패, JSON 폴백: {type(e).__name__}: {e}")
+
     if CONFIG_PATH.exists():
         config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         return config.get("tickers", _FALLBACK_TICKERS)
     return _FALLBACK_TICKERS
+
+
+def universe_refresh_due(today: "datetime | None" = None) -> bool:
+    """오늘 분기 갱신을 돌려야 하는가.
+
+    조건: 이번 달이 분기 첫 달(1·4·7·10)이고, 마지막 build가 이번 분기 이전이다.
+    월 안에서 날짜는 따지지 않는다 — cron 지연·휴장으로 1일에 못 돌 수 있으므로
+    그 달 안에 한 번만 돌면 된다.
+    """
+    now = today or datetime.now()
+    if now.month not in QUARTER_MONTHS:
+        return False
+    try:
+        from src.evaluation.random_control import latest_built_universe
+        last_date, tickers = latest_built_universe()
+    except Exception:
+        return True                    # DB를 못 읽으면 한 번 만들어 본다
+    if not tickers or not last_date:
+        return True
+    return last_date[:7] < now.strftime("%Y-%m")
 
 
 # ──────────────────────────────────────────
@@ -195,6 +235,14 @@ def build_universe(date: str | None = None) -> list[str]:
     final     = merge_pools(kospi_df, kosdaq_df)
 
     save_universe(final, date)
+    # 진실의 원천은 DB다 (결정 3-4b). JSON은 폴백으로만 남긴다.
+    try:
+        from datetime import date as _date
+        from src.evaluation.random_control import record_universe_snapshot
+        n = record_universe_snapshot(_date.today().isoformat(), final, source="build")
+        print(f"✅ DB 저장 완료: universe_snapshots source='build' {n}행")
+    except Exception as e:
+        print(f"⚠️ DB 저장 실패 (JSON은 저장됨): {type(e).__name__}: {e}")
     return final
 
 

@@ -15,6 +15,7 @@ from anthropic import AsyncAnthropic
 
 from src.schemas.agent_output import AnalysisReport
 from src.schemas.graph_state import GraphState
+from src.utils.llm_budget import record_usage
 
 
 # ─────────────────────────────────────────────────────────
@@ -78,6 +79,7 @@ async def _generate_text(system_prompt: str, human_prompt: str) -> str:
         system=system_prompt,
         messages=[{"role": "user", "content": human_prompt}],
     )
+    record_usage(DEBATE_MODEL, getattr(message, "usage", None))
     return message.content[0].text.strip()
 
 
@@ -90,12 +92,7 @@ async def _generate_bull_argument(
     bear_reports: list[AnalysisReport],
     regime: str,
 ) -> str:
-    system = (
-        "당신은 주식 투자 토론에서 Bull(매수) 진영의 대변인입니다. "
-        "매수 의견을 강력하고 논리적으로 주장해야 합니다. "
-        "감정적 표현 없이 수치와 논리로만 주장하세요. "
-        "3~5문장으로 핵심만 간결하게 작성하세요."
-    )
+    system = "[REDACTED] Proprietary prompt engineering"
     human = (
         f"현재 시장 레짐: {regime.upper()}\n\n"
         f"[Bull 진영 근거]\n{_collect_side_context(bull_reports)}\n\n"
@@ -114,12 +111,7 @@ async def _generate_bear_rebuttal(
     bull_argument: str,
     regime: str,
 ) -> str:
-    system = (
-        "당신은 주식 투자 토론에서 Bear(매도) 진영의 대변인입니다. "
-        "Bull의 주장을 직접 인용하며 반박하고, 매도 의견을 강력하게 지지해야 합니다. "
-        "수치와 논리로만 반박하세요. "
-        "3~5문장으로 핵심만 간결하게 작성하세요."
-    )
+    system = "[REDACTED] Proprietary prompt engineering"
     human = (
         f"현재 시장 레짐: {regime.upper()}\n\n"
         f"[Bull이 방금 한 주장]\n{bull_argument}\n\n"
@@ -138,12 +130,7 @@ async def _generate_bull_rebuttal(
     bear_rebuttal: str,
     regime: str,
 ) -> str:
-    system = (
-        "당신은 주식 투자 토론에서 Bull(매수) 진영의 대변인입니다. "
-        "Bear의 반박에 정면으로 맞서 매수 의견을 최종 방어해야 합니다. "
-        "수치와 논리로만 반박하세요. "
-        "3~4문장으로 핵심만 간결하게 작성하세요."
-    )
+    system = "[REDACTED] Proprietary prompt engineering"
     human = (
         f"현재 시장 레짐: {regime.upper()}\n\n"
         f"[Bear가 방금 한 반박]\n{bear_rebuttal}\n\n"
@@ -157,6 +144,12 @@ async def _generate_bull_rebuttal(
 # 7. HOLD 심판 평가
 # ─────────────────────────────────────────────────────────
 
+# 토론은 Bull→Bear→Bull 순서라 Bull이 2번 말하고 마지막 발언도 가진다.
+# 심판이 "마지막에 말한 쪽" 또는 "많이 말한 쪽"에 끌리지 않도록 명시한다
+# (TradingAgents research_manager의 "independent of which side spoke first or last" 발상, 2026-09-20).
+HOLD_VERDICT_SYSTEM_PROMPT = "[REDACTED] Proprietary prompt engineering"
+
+
 async def _generate_hold_verdict(
     hold_reports: list[AnalysisReport],
     bull_argument: str,
@@ -164,12 +157,7 @@ async def _generate_hold_verdict(
     bull_rebuttal: str,
     regime: str,
 ) -> str:
-    system = (
-        "당신은 주식 투자 토론의 중립 심판입니다. "
-        "어느 쪽에도 편들지 않고, 양측 주장의 논리적 강점과 약점을 객관적으로 평가합니다. "
-        "Chief Strategist가 최종 판단을 내릴 때 고려해야 할 핵심 쟁점을 정리하세요. "
-        "3~4문장으로 작성하세요."
-    )
+    system = HOLD_VERDICT_SYSTEM_PROMPT
     human = (
         f"현재 시장 레짐: {regime.upper()}\n\n"
         f"[Bull 주장]\n{bull_argument}\n\n"

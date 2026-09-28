@@ -1,14 +1,24 @@
 """
 tests/test_notion_publisher.py
 
-notion_publisher v4.0 단위 테스트 — Notion API 호출 없음.
+notion_publisher v4.1 단위 테스트 — Notion API 호출 없음.
 build_v4_blocks()와 _markdown_to_blocks() 블록 구조 검증.
+
+7섹션 구조:
+  헤더 callout → 💼 포트폴리오 → 🎯 액션플랜 → 📊 시장지표
+  → 🤖 AI 분석단 → 📋 상세분석 toggle → ⚠️ 리스크 numbered_list
 """
 
 import pytest
 from src.graph.notion_publisher import (
     build_v4_blocks,
     _markdown_to_blocks,
+    _build_portfolio_blocks,
+    _build_action_plan_blocks,
+    _build_market_data_blocks,
+    _build_agent_summary_blocks,
+    _build_rationale_toggle,
+    _build_risk_blocks,
     _rich_text,
     _parse_bold,
     _block,
@@ -17,6 +27,8 @@ from src.graph.notion_publisher import (
     _toggle,
     _heading,
     _bullet,
+    _numbered,
+    _paragraph,
 )
 from src.schemas.agent_output import AnalysisReport
 
@@ -33,7 +45,7 @@ def _make_agent(name: str, rec: str, conf: float) -> AnalysisReport:
         reasoning=["근거1", "근거2", "근거3"],
         data_sources=["소스A", "소스B"],
         prediction_basis=["정량1", "정량2"],
-        risk_factors=["리스크1"],
+        risk_factors=[f"리스크-{name}"],
     )
 
 
@@ -52,17 +64,17 @@ def chief_buy() -> AnalysisReport:
         agent_name="chief_strategist",
         recommendation="BUY",
         confidence=0.78,
-        reasoning=["이유1", "이유2", "이유3"],
+        reasoning=["진입 근거 한줄", "이유2", "이유3"],
         data_sources=["소스X", "소스Y"],
         prediction_basis=["숫자1", "숫자2"],
-        risk_factors=["리스크A"],
+        risk_factors=["리스크-chief"],
         entry_price=300_000.0,
         stop_loss=288_000.0,
         stop_loss_pct=-4.0,
         take_profit_1=324_000.0,
         take_profit_2=336_000.0,
         rr_ratio=2.0,
-        position_size_pct=7.8,
+        position_size_pct=20.0,
         holding_period_weeks=2,
         entry_strategy="분할매수",
     )
@@ -74,10 +86,10 @@ def chief_hold() -> AnalysisReport:
         agent_name="chief_strategist",
         recommendation="HOLD",
         confidence=0.60,
-        reasoning=["이유1", "이유2", "이유3"],
+        reasoning=["방향성 합의 부재", "이유2", "이유3"],
         data_sources=["소스X", "소스Y"],
         prediction_basis=["숫자1", "숫자2"],
-        risk_factors=["리스크A"],
+        risk_factors=["리스크-chief-hold"],
     )
 
 
@@ -87,16 +99,55 @@ def qualified(agents) -> list[AnalysisReport]:
 
 
 @pytest.fixture
-def blocks_buy(agents, chief_buy, qualified) -> list[dict]:
+def portfolio() -> dict:
+    return {
+        "invested_pct": 70.0,
+        "available_pct": 30.0,
+        "cumulative_pnl_seed_pct": 2.3,
+        "positions": [
+            {
+                "ticker": "005930", "ticker_name": "삼성전자",
+                "entry_date": "2026-05-10", "entry_price": 265000, "current_price": 270500,
+                "allocation_pct": 20, "position_pnl_pct": 2.07, "seed_pnl_pct": 0.41,
+                "stop_loss_price": 252000, "take_profit_1": 294300, "take_profit_2": 310500,
+                "holding_days": 6, "holding_period_weeks": 3, "rr_ratio": 2.0, "alert": None,
+            },
+        ],
+        "closed_recent": [
+            {
+                "ticker": "035720", "ticker_name": "카카오",
+                "entry_price": 52000, "close_price": 55000, "allocation_pct": 10,
+                "position_pnl_pct": 5.77, "seed_pnl_pct": 0.58, "holding_days": 9,
+                "close_reason": "manual",
+            },
+        ],
+    }
+
+
+@pytest.fixture
+def market_data() -> dict:
+    return {
+        "kospi": 3000.50,
+        "vix": 18.43,
+        "us_10y_yield": 4.59,
+        "usd_krw": 1382.0,
+        "wti": 105.42,
+    }
+
+
+@pytest.fixture
+def blocks_buy(agents, chief_buy, qualified, portfolio, market_data) -> list[dict]:
     return build_v4_blocks(
         ticker="005930",
-        regime="bull",
+        regime="VOLATILE",
         strategy="BUY",
         chief_report=chief_buy,
         qualified_reports=qualified,
         all_reports=agents + [chief_buy],
         debate_summary="Bull: 강세. Bear: 과열.",
         error_log=[],
+        portfolio_summary=portfolio,
+        market_data=market_data,
     )
 
 
@@ -104,7 +155,7 @@ def blocks_buy(agents, chief_buy, qualified) -> list[dict]:
 def blocks_hold(agents, chief_hold, qualified) -> list[dict]:
     return build_v4_blocks(
         ticker="005930",
-        regime="sideways",
+        regime="VOLATILE",
         strategy="HOLD",
         chief_report=chief_hold,
         qualified_reports=qualified,
@@ -112,6 +163,30 @@ def blocks_hold(agents, chief_hold, qualified) -> list[dict]:
         debate_summary="",
         error_log=[],
     )
+
+
+# ─────────────────────────────────────────────────────────
+# 헬퍼: 블록 내 텍스트 추출
+# ─────────────────────────────────────────────────────────
+
+def _block_text(block: dict) -> str:
+    """블록의 rich_text content를 평탄화해 단일 문자열로 반환."""
+    t = block["type"]
+    if t == "callout":
+        chunks = block["callout"]["rich_text"]
+    elif t == "toggle":
+        chunks = block["toggle"]["rich_text"]
+    elif t.startswith("heading_"):
+        chunks = block[t]["rich_text"]
+    elif t == "bulleted_list_item":
+        chunks = block["bulleted_list_item"]["rich_text"]
+    elif t == "numbered_list_item":
+        chunks = block["numbered_list_item"]["rich_text"]
+    elif t == "paragraph":
+        chunks = block["paragraph"]["rich_text"]
+    else:
+        return ""
+    return "".join(c["text"]["content"] for c in chunks)
 
 
 # ─────────────────────────────────────────────────────────
@@ -132,7 +207,6 @@ def test_rich_text_bold():
 def test_rich_text_chunking():
     long_text = "x" * 4500
     rt = _rich_text(long_text)
-    # 4500자 → 3청크 (2000+2000+500)
     assert len(rt) == 3
     for chunk in rt:
         assert len(chunk["text"]["content"]) <= 2000
@@ -199,6 +273,295 @@ def test_bullet_structure():
     assert b["type"] == "bulleted_list_item"
 
 
+def test_numbered_structure():
+    n = _numbered("1번 항목")
+    assert n["type"] == "numbered_list_item"
+
+
+def test_paragraph_structure():
+    p = _paragraph("문단 텍스트")
+    assert p["type"] == "paragraph"
+
+
+# ─────────────────────────────────────────────────────────
+# _build_portfolio_blocks
+# ─────────────────────────────────────────────────────────
+
+def test_portfolio_blocks_empty():
+    blocks = _build_portfolio_blocks(None)
+    assert any("보유 포지션 없음" in _block_text(b) for b in blocks)
+
+
+def test_portfolio_blocks_empty_positions():
+    blocks = _build_portfolio_blocks({"positions": []})
+    assert any("보유 포지션 없음" in _block_text(b) for b in blocks)
+
+
+def test_portfolio_blocks_header_present(portfolio):
+    blocks = _build_portfolio_blocks(portfolio)
+    headings = [b for b in blocks if b["type"] == "heading_2"]
+    assert any("내 포트폴리오 현황" in _block_text(h) for h in headings)
+
+
+def test_portfolio_blocks_callout_color_green(portfolio):
+    """누적 수익 양수 → green_background callout."""
+    blocks = _build_portfolio_blocks(portfolio)
+    callouts = [b for b in blocks if b["type"] == "callout"]
+    assert any(c["callout"]["color"] == "green_background" for c in callouts)
+
+
+def test_portfolio_blocks_callout_color_red():
+    summary = {
+        "invested_pct": 50, "available_pct": 50,
+        "cumulative_pnl_seed_pct": -3.5,
+        "positions": [{
+            "ticker": "005930", "ticker_name": "삼성전자",
+            "entry_date": "2026-05-10", "entry_price": 100000, "current_price": 90000,
+            "allocation_pct": 50, "position_pnl_pct": -10.0, "seed_pnl_pct": -5.0,
+            "stop_loss_price": 93000, "take_profit_1": None, "take_profit_2": None,
+            "holding_days": 3, "holding_period_weeks": 2, "rr_ratio": 1.5, "alert": None,
+        }],
+        "closed_recent": [],
+    }
+    blocks = _build_portfolio_blocks(summary)
+    callouts = [b for b in blocks if b["type"] == "callout"]
+    assert any(c["callout"]["color"] == "red_background" for c in callouts)
+
+
+def test_portfolio_blocks_position_bullets(portfolio):
+    blocks = _build_portfolio_blocks(portfolio)
+    bullets = [b for b in blocks if b["type"] == "bulleted_list_item"]
+    texts = [_block_text(b) for b in bullets]
+    assert any("삼성전자" in t for t in texts)
+    assert any("265,000" in t for t in texts)
+
+
+def test_portfolio_blocks_alert_stop_loss_prefix():
+    summary = {
+        "invested_pct": 20, "available_pct": 80, "cumulative_pnl_seed_pct": 0,
+        "positions": [{
+            "ticker": "005930", "ticker_name": "삼성전자",
+            "entry_date": "2026-05-10", "entry_price": 100000, "current_price": 90000,
+            "allocation_pct": 20, "position_pnl_pct": -10.0, "seed_pnl_pct": -2.0,
+            "stop_loss_price": 93000, "take_profit_1": None, "take_profit_2": None,
+            "holding_days": 3, "holding_period_weeks": 2, "rr_ratio": 1.5,
+            "alert": "stop_loss",
+        }],
+        "closed_recent": [],
+    }
+    blocks = _build_portfolio_blocks(summary)
+    bullets = [_block_text(b) for b in blocks if b["type"] == "bulleted_list_item"]
+    assert any("⚠️" in t for t in bullets)
+
+
+def test_portfolio_blocks_alert_target_prefix():
+    summary = {
+        "invested_pct": 20, "available_pct": 80, "cumulative_pnl_seed_pct": 0,
+        "positions": [{
+            "ticker": "005930", "ticker_name": "삼성전자",
+            "entry_date": "2026-05-10", "entry_price": 100000, "current_price": 115000,
+            "allocation_pct": 20, "position_pnl_pct": 15.0, "seed_pnl_pct": 3.0,
+            "stop_loss_price": 93000, "take_profit_1": 110000, "take_profit_2": None,
+            "holding_days": 3, "holding_period_weeks": 2, "rr_ratio": 1.5,
+            "alert": "target",
+        }],
+        "closed_recent": [],
+    }
+    blocks = _build_portfolio_blocks(summary)
+    bullets = [_block_text(b) for b in blocks if b["type"] == "bulleted_list_item"]
+    assert any("🎯" in t for t in bullets)
+
+
+def test_portfolio_blocks_closed_recent_heading(portfolio):
+    blocks = _build_portfolio_blocks(portfolio)
+    headings = [b for b in blocks if b["type"] == "heading_3"]
+    assert any("청산 이력" in _block_text(h) for h in headings)
+
+
+# ─────────────────────────────────────────────────────────
+# _build_action_plan_blocks
+# ─────────────────────────────────────────────────────────
+
+def test_action_plan_blocks_buy_callout(chief_buy, portfolio):
+    blocks = _build_action_plan_blocks(chief_buy, portfolio, "005930")
+    callouts = [b for b in blocks if b["type"] == "callout"]
+    green = [c for c in callouts if c["callout"]["color"] == "green_background"]
+    assert green
+
+
+def test_action_plan_blocks_buy_includes_entry_price(chief_buy, portfolio):
+    blocks = _build_action_plan_blocks(chief_buy, portfolio, "005930")
+    texts = [_block_text(b) for b in blocks]
+    combined = "\n".join(texts)
+    assert "300,000" in combined
+
+
+def test_action_plan_blocks_buy_includes_allocation(chief_buy, portfolio):
+    blocks = _build_action_plan_blocks(chief_buy, portfolio, "005930")
+    combined = "\n".join(_block_text(b) for b in blocks)
+    assert "시드의 20%" in combined
+
+
+def test_action_plan_blocks_buy_includes_rr_weeks(chief_buy, portfolio):
+    blocks = _build_action_plan_blocks(chief_buy, portfolio, "005930")
+    combined = "\n".join(_block_text(b) for b in blocks)
+    assert "2주" in combined
+    assert "2.0" in combined
+
+
+def test_action_plan_blocks_cash_shortage_warning():
+    chief = AnalysisReport(
+        agent_name="chief_strategist", recommendation="BUY", confidence=0.7,
+        reasoning=["a", "b", "c"], data_sources=["s1", "s2"],
+        prediction_basis=["p1", "p2"], risk_factors=["r1"],
+        entry_price=100000, stop_loss=95000, stop_loss_pct=-5,
+        take_profit_1=110000, take_profit_2=120000, rr_ratio=2.0,
+        position_size_pct=50.0,
+        holding_period_weeks=2,
+    )
+    portfolio_short = {
+        "invested_pct": 70, "available_pct": 30,
+        "cumulative_pnl_seed_pct": 0, "positions": [], "closed_recent": [],
+    }
+    blocks = _build_action_plan_blocks(chief, portfolio_short, "005930")
+    callouts = [b for b in blocks if b["type"] == "callout"]
+    red = [c for c in callouts if c["callout"]["color"] == "red_background"]
+    assert red
+    assert any("초과" in _block_text(c) for c in red)
+
+
+def test_action_plan_blocks_no_buy_recommendation(chief_hold, portfolio):
+    blocks = _build_action_plan_blocks(chief_hold, portfolio, "005930")
+    combined = "\n".join(_block_text(b) for b in blocks)
+    assert "오늘 신규 진입 추천 없음" in combined
+
+
+def test_action_plan_blocks_other_ticker_monitoring(chief_buy, portfolio):
+    """분석 대상 ticker가 보유 종목과 다를 때 모니터링 표시."""
+    blocks = _build_action_plan_blocks(chief_buy, portfolio, "000660")
+    combined = "\n".join(_block_text(b) for b in blocks)
+    assert "모니터링" in combined
+
+
+def test_action_plan_blocks_existing_position_hold(chief_hold, portfolio):
+    blocks = _build_action_plan_blocks(chief_hold, portfolio, "005930")
+    combined = "\n".join(_block_text(b) for b in blocks)
+    assert "유지" in combined
+
+
+# ─────────────────────────────────────────────────────────
+# _build_market_data_blocks
+# ─────────────────────────────────────────────────────────
+
+def test_market_data_blocks_none():
+    blocks = _build_market_data_blocks(None)
+    combined = "\n".join(_block_text(b) for b in blocks)
+    assert "시장 지표 데이터 없음" in combined
+
+
+def test_market_data_blocks_empty():
+    blocks = _build_market_data_blocks({})
+    combined = "\n".join(_block_text(b) for b in blocks)
+    assert "시장 지표 데이터 없음" in combined
+
+
+def test_market_data_blocks_indicators(market_data):
+    blocks = _build_market_data_blocks(market_data)
+    combined = "\n".join(_block_text(b) for b in blocks)
+    assert "KOSPI" in combined
+    assert "공포지수(VIX)" in combined
+    assert "미 10년 금리" in combined
+
+
+def test_market_data_blocks_vix_high_interp():
+    blocks = _build_market_data_blocks({"vix": 35.0})
+    combined = "\n".join(_block_text(b) for b in blocks)
+    assert "공포" in combined
+
+
+def test_market_data_blocks_yield_high_interp():
+    blocks = _build_market_data_blocks({"us_10y_yield": 5.0})
+    combined = "\n".join(_block_text(b) for b in blocks)
+    assert "주식 부담" in combined
+
+
+# ─────────────────────────────────────────────────────────
+# _build_agent_summary_blocks
+# ─────────────────────────────────────────────────────────
+
+def test_agent_summary_blocks_agents(agents, chief_buy):
+    blocks = _build_agent_summary_blocks(agents, chief_buy, {"macro_economist"})
+    combined = "\n".join(_block_text(b) for b in blocks)
+    # 한글 이름으로 렌더되는지
+    assert "매크로 분석" in combined or "macro_economist" in combined
+
+
+def test_agent_summary_blocks_final_label(agents, chief_buy):
+    blocks = _build_agent_summary_blocks(agents, chief_buy, set())
+    combined = "\n".join(_block_text(b) for b in blocks)
+    assert "최종 판단" in combined
+
+
+def test_agent_summary_blocks_low_conf_note():
+    low = _make_agent("macro_economist", "HOLD", 0.40)
+    blocks = _build_agent_summary_blocks([low], None, set())
+    combined = "\n".join(_block_text(b) for b in blocks)
+    assert "참고용" in combined
+
+
+def test_agent_summary_blocks_zero_conf_note():
+    zero = _make_agent("macro_economist", "HOLD", 0.0)
+    blocks = _build_agent_summary_blocks([zero], None, set())
+    combined = "\n".join(_block_text(b) for b in blocks)
+    assert "데이터없음" in combined
+
+
+# ─────────────────────────────────────────────────────────
+# _build_rationale_toggle (섹션 5)
+# ─────────────────────────────────────────────────────────
+
+def test_rationale_toggle_returns_toggle(agents, chief_buy):
+    t = _build_rationale_toggle(agents, chief_buy, set())
+    assert t["type"] == "toggle"
+    assert "에이전트별 상세 분석" in _block_text(t)
+
+
+def test_rationale_toggle_has_children(agents, chief_buy):
+    t = _build_rationale_toggle(agents, chief_buy, set())
+    assert len(t["toggle"]["children"]) > 0
+
+
+# ─────────────────────────────────────────────────────────
+# _build_risk_blocks
+# ─────────────────────────────────────────────────────────
+
+def test_risk_blocks_numbered_list(agents, chief_buy):
+    blocks = _build_risk_blocks(agents, chief_buy)
+    numbered = [b for b in blocks if b["type"] == "numbered_list_item"]
+    assert len(numbered) > 0
+
+
+def test_risk_blocks_limit_to_five():
+    many = [
+        AnalysisReport(
+            agent_name=f"agent_{i}", confidence=0.8, recommendation="HOLD",
+            reasoning=["a", "b", "c"], data_sources=["s1", "s2"],
+            prediction_basis=["p1", "p2"],
+            risk_factors=[f"unique-risk-{i}"],
+        )
+        for i in range(10)
+    ]
+    blocks = _build_risk_blocks(many, None)
+    numbered = [b for b in blocks if b["type"] == "numbered_list_item"]
+    assert len(numbered) == 5
+
+
+def test_risk_blocks_empty():
+    blocks = _build_risk_blocks([], None)
+    combined = "\n".join(_block_text(b) for b in blocks)
+    assert "주요 리스크 없음" in combined
+
+
 # ─────────────────────────────────────────────────────────
 # build_v4_blocks 구조 검증
 # ─────────────────────────────────────────────────────────
@@ -216,103 +579,95 @@ def test_build_all_have_type(blocks_buy):
         assert "type" in b
 
 
-def test_build_has_dividers(blocks_buy):
+def test_build_header_callout(blocks_buy):
+    """첫 번째 블록은 헤더 callout이며 'Daily stock market report' 포함."""
+    first = blocks_buy[0]
+    assert first["type"] == "callout"
+    text = _block_text(first)
+    assert "Daily stock market report" in text
+
+
+def test_build_header_callout_includes_regime_kr(blocks_buy):
+    first = blocks_buy[0]
+    text = _block_text(first)
+    assert "변동성 장세" in text
+
+
+def test_build_header_callout_includes_strategy_kr(blocks_buy):
+    first = blocks_buy[0]
+    text = _block_text(first)
+    assert "매수" in text
+
+
+def test_build_has_section_dividers(blocks_buy):
     dividers = [b for b in blocks_buy if b["type"] == "divider"]
-    assert len(dividers) >= 4  # 헤더 후, 섹션 사이마다
+    # 헤더 + 6개 섹션 사이 = 최소 5개
+    assert len(dividers) >= 5
 
 
-def test_build_buy_has_green_callout(blocks_buy):
+def test_build_has_seven_section_headings(blocks_buy):
+    """heading_2가 5개 이상 (포트폴리오/액션/시장/AI/리스크)."""
+    h2 = [b for b in blocks_buy if b["type"] == "heading_2"]
+    assert len(h2) >= 5
+
+
+def test_build_section_order(blocks_buy):
+    """heading_2의 순서가 섹션 순서를 따른다."""
+    h2_texts = [_block_text(b) for b in blocks_buy if b["type"] == "heading_2"]
+    expected_keywords = ["포트폴리오", "액션 플랜", "시장 지표", "AI 분석단", "리스크"]
+    j = 0
+    for h in h2_texts:
+        if j < len(expected_keywords) and expected_keywords[j] in h:
+            j += 1
+    assert j == len(expected_keywords)
+
+
+def test_build_buy_has_green_action_callout(blocks_buy):
     callouts = [b for b in blocks_buy if b["type"] == "callout"]
-    # BUY → green_background callout 존재
-    green_callouts = [c for c in callouts if c["callout"].get("color") == "green_background"]
-    assert len(green_callouts) >= 1
+    green = [c for c in callouts if c["callout"]["color"] == "green_background"]
+    assert len(green) >= 1
 
 
 def test_build_buy_entry_price_in_callout(blocks_buy):
     callouts = [b for b in blocks_buy if b["type"] == "callout"]
-    green_callouts = [c for c in callouts if c["callout"].get("color") == "green_background"]
-    assert green_callouts
-    text = " ".join(
-        chunk["text"]["content"]
-        for chunk in green_callouts[0]["callout"]["rich_text"]
-    )
-    assert "300,000" in text
+    green = [c for c in callouts if c["callout"]["color"] == "green_background"]
+    found = False
+    for c in green:
+        if "300,000" in _block_text(c):
+            found = True
+            break
+    assert found
 
 
-def test_build_hold_has_yellow_callout(blocks_hold):
+def test_build_has_rationale_toggle(blocks_buy):
+    toggles = [b for b in blocks_buy if b["type"] == "toggle"]
+    assert any("상세 분석" in _block_text(t) for t in toggles)
+
+
+def test_build_risk_section_numbered_list(blocks_buy):
+    numbered = [b for b in blocks_buy if b["type"] == "numbered_list_item"]
+    assert len(numbered) >= 1
+
+
+def test_build_hold_no_green_action_callout(blocks_hold):
+    """HOLD에선 신규 매수 green callout 없어야 함."""
     callouts = [b for b in blocks_hold if b["type"] == "callout"]
-    yellow = [c for c in callouts if c["callout"].get("color") == "yellow_background"]
-    assert len(yellow) >= 1
+    green = [c for c in callouts if c["callout"]["color"] == "green_background"]
+    # 헤더는 blue. 포트폴리오 없으면 신규 매수 callout 없음.
+    assert len(green) == 0
 
 
-def test_build_has_toggle_for_analysis(blocks_buy):
-    toggles = [b for b in blocks_buy if b["type"] == "toggle"]
-    assert len(toggles) >= 1
-
-
-def test_build_toggle_has_children(blocks_buy):
-    toggles = [b for b in blocks_buy if b["type"] == "toggle"]
-    rationale_toggle = next(
-        (t for t in toggles if "분석" in t["toggle"]["rich_text"][0]["text"]["content"]), None
-    )
-    assert rationale_toggle is not None
-    assert len(rationale_toggle["toggle"]["children"]) > 0
-
-
-def test_build_heading_in_blocks(blocks_buy):
-    headings = [b for b in blocks_buy if b["type"].startswith("heading_")]
-    assert len(headings) >= 3
-
-
-def test_build_ticker_in_header_callout(blocks_buy):
-    # 첫 번째 블록은 헤더 callout
-    first = blocks_buy[0]
-    assert first["type"] == "callout"
-    text = " ".join(c["text"]["content"] for c in first["callout"]["rich_text"])
-    assert "005930" in text
-
-
-def test_build_no_chief_in_agents(blocks_buy, agents, chief_buy, qualified):
-    """all_reports에 chief_strategist가 섞여도 에이전트 섹션에서 분리돼야 함."""
+def test_build_no_chief_in_agents_section(agents, chief_buy, qualified):
+    """all_reports에 chief가 섞여도 분리되어 헤더 행 1개만 등장."""
     blocks = build_v4_blocks(
         ticker="005930", regime="bull", strategy="BUY",
         chief_report=chief_buy,
         qualified_reports=qualified,
         all_reports=agents + [chief_buy],
     )
-    assert isinstance(blocks, list)
-
-
-def test_build_debate_toggle_present_when_debate(blocks_buy):
-    toggles = [b for b in blocks_buy if b["type"] == "toggle"]
-    debate_toggle = next(
-        (t for t in toggles if "토론" in t["toggle"]["rich_text"][0]["text"]["content"]), None
-    )
-    assert debate_toggle is not None
-
-
-def test_build_no_debate_toggle_when_empty(blocks_hold):
-    toggles = [b for b in blocks_hold if b["type"] == "toggle"]
-    debate_toggles = [
-        t for t in toggles if "토론" in t["toggle"]["rich_text"][0]["text"]["content"]
-    ]
-    assert len(debate_toggles) == 0
-
-
-def test_build_error_log_appears(agents, chief_hold, qualified):
-    blocks = build_v4_blocks(
-        ticker="005930", regime="bull", strategy="HOLD",
-        chief_report=chief_hold,
-        qualified_reports=qualified,
-        all_reports=agents + [chief_hold],
-        error_log=["regime_detector 타임아웃"],
-    )
     bullets = [b for b in blocks if b["type"] == "bulleted_list_item"]
-    texts = [
-        " ".join(c["text"]["content"] for c in b["bulleted_list_item"]["rich_text"])
-        for b in bullets
-    ]
-    assert any("타임아웃" in t for t in texts)
+    chief_lines = [b for b in bullets if "최종 판단" in _block_text(b)]
+    assert len(chief_lines) == 1
 
 
 def test_build_without_structured_data_no_crash():
@@ -323,6 +678,19 @@ def test_build_without_structured_data_no_crash():
         all_reports=[],
     )
     assert isinstance(blocks, list)
+    assert len(blocks) > 0
+
+
+def test_build_with_portfolio_renders_position_bullet(blocks_buy):
+    bullets = [b for b in blocks_buy if b["type"] == "bulleted_list_item"]
+    texts = [_block_text(b) for b in bullets]
+    assert any("삼성전자" in t for t in texts)
+
+
+def test_build_with_market_data_renders_indicators(blocks_buy):
+    combined = "\n".join(_block_text(b) for b in blocks_buy)
+    assert "KOSPI" in combined
+    assert "공포지수(VIX)" in combined
 
 
 # ─────────────────────────────────────────────────────────

@@ -97,16 +97,21 @@ async def quality_gate_node(state: GraphState) -> dict:
             failed_logs.append(f"[QualityGate] {report.agent_name} 탈락: {reason}")
 
     # ── 소프트 폴백 ──────────────────────────────
+    # G3: confidence 0.0은 "의견 없음(abstain)"이지 "관망 의견"이 아니다. 폴백에서도 투표에
+    # 넣지 않는다 (ai-hedge-fund construction.py: "'no opinion' must not masquerade as
+    # 'opinion: neutral'"). 전부 abstain이면 빈 목록 → chief가 HOLD 폴백을 낸다.
     if len(passed) < MIN_QUALIFIED:
+        voting   = [r for r in candidates if r.confidence > 0.0]
+        abstained = len(candidates) - len(voting)
         print(
             f"  ⚠️  통과 {len(passed)}/{len(candidates)}개 < {MIN_QUALIFIED}개 "
-            f"→ 소프트 폴백: 원본 전체 사용"
+            f"→ 소프트 폴백: 원본 {len(voting)}개 사용 (abstain {abstained}개 제외)"
         )
         failed_logs.append(
             f"[QualityGate] 소프트 폴백 발동 — "
-            f"통과 {len(passed)}/{len(candidates)}개, 원본 전체 사용"
+            f"통과 {len(passed)}/{len(candidates)}개, 원본 {len(voting)}개 사용, abstain {abstained}개 제외"
         )
-        qualified = candidates          # 원본 전체
+        qualified = voting
     else:
         qualified = passed
 
