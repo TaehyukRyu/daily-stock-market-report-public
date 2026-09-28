@@ -431,17 +431,17 @@ pytest 8.3.5       pytest-asyncio 0.26.0
 | `ANTHROPIC_API_KEY` | chief_strategist + debate + 뉴스 스크린 |
 | `FRED_API_KEY` `BOK_ECOS_API_KEY` | 거시경제 |
 | `NAVER_CLIENT_ID` `NAVER_CLIENT_SECRET` | 뉴스/언급량 |
-| `KRX_ID` `KRX_PW` `KRX_OpenAPI` | 한국 시장 (pykrx가 내부에서 읽음) |
+| `KRX_ID` `KRX_PW` | 한국 시장 (pykrx가 내부에서 읽음) |
 | `DART_API_KEY` | 공시 |
 | `NOTION_API_KEY` `NOTION_DATABASE_ID` | 리포트 발행 |
 | `CHIEF_MODE` | `legacy`(기본) / `python_sonnet` |
 | `LLM_BUDGET_USD` | 실행 1회 상한 (기본 5.0) |
-| `SHADOW_MODE` | 섀도 A/B (기본 on, `off`로 끔) |
+| `SHADOW_MODE` | 섀도 A/B (`shadow` 기본, `off`로 끔 — 그 밖의 값은 off로 처리) |
 | `MENTIONS_DB_PATH` | DB 경로 오버라이드 (테스트용) |
 | `LANGCHAIN_API_KEY` `LANGCHAIN_PROJECT` `LANGCHAIN_ENDPOINT` | LangSmith (선택) |
 
-**⚠️ `.env.example`이 낡았다.** `NOTION_TOKEN`(코드는 `NOTION_API_KEY`를 읽는다), 쓰지 않는
-`GOOGLE_API_KEY`/`HUGGINGFACE_API_KEY`가 남아 있고, 위 표의 절반이 빠져 있다.
+`.env.example`에 위 키가 모두 들어 있다. 선택 항목은 빈 값으로 두지 말고 줄을 지운다
+(`LLM_BUDGET_USD=`처럼 비우면 `float("")` 오류가 난다).
 
 ---
 
@@ -575,7 +575,6 @@ LLM이나 외부 인증을 호출하는 테스트라면 **반드시** `tests/con
 | ISSUE-SCHEMA-01 | gpt-4o-mini가 `risk_factors`를 빠뜨려 재요청 발생 | 1회 재요청 후 실패 시 abstain |
 | ISSUE-BT-01 | LLM 포함 백테스트 불가 (뉴스 아카이브 축적 시작 단계) | 아카이브가 쌓인 뒤 |
 | ISSUE-TEST-01 | `test_*_selection_rationale_filled` 2건 실패 — LLM이 해당 필드를 비움 | costly 마크됨. 인프라 문제 아님 |
-| ISSUE-DOC-01 | `.env.example`이 실제 환경변수와 불일치 | 위 환경변수 표 참조 |
 | ISSUE-SCREEN-01 | 스크리닝 v2 워밍업 — `news_burst`가 기준선 기간이 찰 때까지 꺼져 있어 공시 종목만 후보 | 자동 해소 |
 
 ---

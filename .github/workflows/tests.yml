@@ -8,12 +8,17 @@ name: Tests
 #   전체를 돌리면 78분 + OpenAI 호출 82건이 매번 과금된다.
 #   push마다 그럴 수는 없으므로, 무료·빠른 252건만 돌린다 (약 30초).
 #   분류는 tests/conftest.py 의 COSTLY_MODULES 참조.
+#
+# [paths-ignore] 문서·그림만 바뀐 push/PR은 테스트를 건너뛴다.
+#   코드가 한 줄이라도 섞여 있으면 평소처럼 돈다.
 # ──────────────────────────────────────────────────────────────
 on:
   push:
     branches: ['**']
+    paths-ignore: ['**.md', 'assets/**', 'doc/**', 'docs/**']
   pull_request:
     branches: [main]
+    paths-ignore: ['**.md', 'assets/**', 'doc/**', 'docs/**']
   workflow_dispatch:
 
 concurrency:
