@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="944" height="320" viewBox="0 0 944 320" role="img" aria-labelledby="daily-flow-title daily-flow-desc">
+<title id="daily-flow-title">하루 흐름</title>
+<desc id="daily-flow-desc">유니버스 110종목을 뉴스·공시로 스크리닝하고, 투표자 8명의 표를 파이썬 규칙이 방향으로 확정한 뒤 chief가 근거를 서술해 Notion에 발행하는 흐름. 토론은 의견이 팽팽할 때만 열린다.</desc>
+<defs>
+<style>
+.bg{fill:#f5f5f5} .mask{fill:#f5f5f5}
+.card{fill:#ffffff;stroke:#2d3142}
+.inp{fill:rgba(79,93,117,0.10);stroke:#7a8399}
+.opt{fill:rgba(45,49,66,0.02);stroke:rgba(45,49,66,0.40);stroke-dasharray:4 3}
+.ext{fill:rgba(45,49,66,0.03);stroke:rgba(45,49,66,0.30)}
+.store{fill:rgba(45,49,66,0.05);stroke:#4f5d75}
+.focal{fill:rgba(235,108,54,0.08);stroke:#eb6c36}
+.hub{fill:#2d3142}
+.ln{stroke:#4f5d75;fill:none} .ln-soft{stroke:#7a8399;fill:none} .ln-acc{stroke:#eb6c36;fill:none}
+.m{fill:#4f5d75} .m-soft{fill:#7a8399} .m-acc{fill:#eb6c36}
+.rule{stroke:rgba(45,49,66,0.12)}
+.t-ink{fill:#2d3142} .t-muted{fill:#4f5d75} .t-soft{fill:#7a8399} .t-acc{fill:#d9591f} .t-hub{fill:#f5f5f5}
+.dot{fill:#2d3142}
+.sans{font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',sans-serif} .mono{font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace}
+@media (prefers-color-scheme: dark){
+.bg{fill:#2d3142} .mask{fill:#2d3142}
+.card{fill:#393e53;stroke:#f5f5f5}
+.inp{fill:rgba(191,192,192,0.10);stroke:#8e98ac}
+.opt{fill:rgba(245,245,245,0.03);stroke:rgba(245,245,245,0.45)}
+.ext{fill:rgba(245,245,245,0.04);stroke:rgba(245,245,245,0.35)}
+.store{fill:rgba(245,245,245,0.06);stroke:#bfc0c0}
+.focal{fill:rgba(240,138,89,0.10);stroke:#f08a59}
+.hub{fill:#f5f5f5}
+.ln{stroke:#bfc0c0} .ln-soft{stroke:#8e98ac} .ln-acc{stroke:#f08a59}
+.m{fill:#bfc0c0} .m-soft{fill:#8e98ac} .m-acc{fill:#f08a59}
+.rule{stroke:rgba(245,245,245,0.12)}
+.t-ink{fill:#f5f5f5} .t-muted{fill:#bfc0c0} .t-soft{fill:#8e98ac} .t-acc{fill:#f08a59} .t-hub{fill:#2d3142}
+.dot{fill:#f5f5f5}
+}
+</style>
+<marker id="daily-flow-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon class="m" points="0 0, 8 3, 0 6"/></marker>
+<marker id="daily-flow-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon class="m-soft" points="0 0, 8 3, 0 6"/></marker>
+<marker id="daily-flow-arrow-acc" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon class="m-acc" points="0 0, 8 3, 0 6"/></marker>
+</defs>
+<rect class="bg" width="944" height="320" rx="8"/>
+<text class="mono t-soft" x="32" y="36" font-size="12" letter-spacing="0.08em">EVERY WEEKDAY · GITHUB ACTIONS</text>
+<path class="ln" d="M152,192 H182" stroke-width="1.2" marker-end="url(#daily-flow-arrow)"/>
+<path class="ln" d="M304,192 H334" stroke-width="1.2" marker-end="url(#daily-flow-arrow)"/>
+<path class="ln" d="M456,192 H486" stroke-width="1.2" marker-end="url(#daily-flow-arrow)"/>
+<path class="ln" d="M608,192 H638" stroke-width="1.2" marker-end="url(#daily-flow-arrow)"/>
+<path class="ln" d="M760,192 H790" stroke-width="1.2" marker-end="url(#daily-flow-arrow)"/>
+<path class="ln-soft" d="M396,160 V96 Q396,88 404,88 H486" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#daily-flow-arrow-soft)"/>
+<path class="ln-soft" d="M608,88 H692 Q700,88 700,96 V158" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#daily-flow-arrow-soft)"/>
+<line class="ln-soft" x1="548" y1="228" x2="548" y2="240" stroke-width="1" stroke-dasharray="2,3"/>
+<rect class="mask" x="488" y="56" width="120" height="64" rx="6"/>
+<rect class="opt" x="488" y="56" width="120" height="64" rx="6" stroke-width="1"/>
+<text class="sans t-ink" x="548" y="86" font-size="16" font-weight="600" text-anchor="middle">토론</text>
+<text class="sans t-muted" x="548" y="106" font-size="12" text-anchor="middle">의견이 팽팽할 때</text>
+<rect class="mask" x="32" y="160" width="120" height="64" rx="6"/>
+<rect class="inp" x="32" y="160" width="120" height="64" rx="6" stroke-width="1"/>
+<text class="sans t-ink" x="92" y="190" font-size="16" font-weight="600" text-anchor="middle">유니버스</text>
+<text class="sans t-muted" x="92" y="210" font-size="12" text-anchor="middle">110종목</text>
+<rect class="card" x="184" y="160" width="120" height="64" rx="6" stroke-width="1"/>
+<text class="sans t-ink" x="244" y="190" font-size="16" font-weight="600" text-anchor="middle">스크리닝</text>
+<text class="sans t-muted" x="244" y="210" font-size="12" text-anchor="middle">뉴스 급증·공시</text>
+<rect class="card" x="336" y="160" width="120" height="64" rx="6" stroke-width="1"/>
+<text class="sans t-ink" x="396" y="190" font-size="16" font-weight="600" text-anchor="middle">투표 8명</text>
+<text class="sans t-muted" x="396" y="210" font-size="12" text-anchor="middle">LLM 7 + 규칙 1</text>
+<rect class="mask" x="488" y="160" width="120" height="64" rx="6"/>
+<rect class="focal" x="488" y="160" width="120" height="64" rx="6" stroke-width="1"/>
+<text class="sans t-ink" x="548" y="190" font-size="16" font-weight="600" text-anchor="middle">방향 결정</text>
+<text class="mono t-muted" x="548" y="210" font-size="12" text-anchor="middle">decide()</text>
+<rect class="card" x="640" y="160" width="120" height="64" rx="6" stroke-width="1"/>
+<text class="sans t-ink" x="700" y="190" font-size="16" font-weight="600" text-anchor="middle">chief 서술</text>
+<text class="sans t-muted" x="700" y="210" font-size="12" text-anchor="middle">근거·리스크</text>
+<rect class="mask" x="792" y="160" width="120" height="64" rx="6"/>
+<rect class="ext" x="792" y="160" width="120" height="64" rx="6" stroke-width="1"/>
+<text class="sans t-ink" x="852" y="190" font-size="16" font-weight="600" text-anchor="middle">Notion</text>
+<text class="sans t-muted" x="852" y="210" font-size="12" text-anchor="middle">하루 1건 발행</text>
+<text class="sans t-muted" x="548" y="256" font-size="12" text-anchor="middle">표가 같으면 방향도 같다</text>
+<line class="rule" x1="32" y1="280" x2="912" y2="280" stroke-width="0.8"/>
+<line class="ln" x1="32" y1="300" x2="60" y2="300" stroke-width="1.2"/>
+<text class="sans t-muted" x="68" y="304" font-size="12">매일</text>
+<line class="ln-soft" x1="124" y1="300" x2="152" y2="300" stroke-width="1" stroke-dasharray="5,4"/>
+<text class="sans t-muted" x="160" y="304" font-size="12">조건부</text>
+<rect class="focal" x="228" y="292" width="20" height="14" rx="3" stroke-width="1"/>
+<text class="sans t-muted" x="256" y="304" font-size="12">LLM이 아닌 코드</text>
+</svg>

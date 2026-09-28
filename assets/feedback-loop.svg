@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="688" height="664" viewBox="0 0 688 664" role="img" aria-labelledby="feedback-loop-title feedback-loop-desc">
+<title id="feedback-loop-title">채점·학습 루프</title>
+<desc id="feedback-loop-desc">매일의 예측을 기록하고 D+1에 복기 교훈을, D+5에 실현 수익 채점을 남긴 뒤, 증거 게이트를 통과할 때만 가중치를 갱신해 다음 판단에 주입하는 순환. 모든 기록은 mentions.db 한 곳에 쌓인다.</desc>
+<defs>
+<style>
+.bg{fill:#f5f5f5} .mask{fill:#f5f5f5}
+.card{fill:#ffffff;stroke:#2d3142}
+.inp{fill:rgba(79,93,117,0.10);stroke:#7a8399}
+.opt{fill:rgba(45,49,66,0.02);stroke:rgba(45,49,66,0.40);stroke-dasharray:4 3}
+.ext{fill:rgba(45,49,66,0.03);stroke:rgba(45,49,66,0.30)}
+.store{fill:rgba(45,49,66,0.05);stroke:#4f5d75}
+.focal{fill:rgba(235,108,54,0.08);stroke:#eb6c36}
+.hub{fill:#2d3142}
+.ln{stroke:#4f5d75;fill:none} .ln-soft{stroke:#7a8399;fill:none} .ln-acc{stroke:#eb6c36;fill:none}
+.m{fill:#4f5d75} .m-soft{fill:#7a8399} .m-acc{fill:#eb6c36}
+.rule{stroke:rgba(45,49,66,0.12)}
+.t-ink{fill:#2d3142} .t-muted{fill:#4f5d75} .t-soft{fill:#7a8399} .t-acc{fill:#d9591f} .t-hub{fill:#f5f5f5}
+.dot{fill:#2d3142}
+.sans{font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',sans-serif} .mono{font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace}
+@media (prefers-color-scheme: dark){
+.bg{fill:#2d3142} .mask{fill:#2d3142}
+.card{fill:#393e53;stroke:#f5f5f5}
+.inp{fill:rgba(191,192,192,0.10);stroke:#8e98ac}
+.opt{fill:rgba(245,245,245,0.03);stroke:rgba(245,245,245,0.45)}
+.ext{fill:rgba(245,245,245,0.04);stroke:rgba(245,245,245,0.35)}
+.store{fill:rgba(245,245,245,0.06);stroke:#bfc0c0}
+.focal{fill:rgba(240,138,89,0.10);stroke:#f08a59}
+.hub{fill:#f5f5f5}
+.ln{stroke:#bfc0c0} .ln-soft{stroke:#8e98ac} .ln-acc{stroke:#f08a59}
+.m{fill:#bfc0c0} .m-soft{fill:#8e98ac} .m-acc{fill:#f08a59}
+.rule{stroke:rgba(245,245,245,0.12)}
+.t-ink{fill:#f5f5f5} .t-muted{fill:#bfc0c0} .t-soft{fill:#8e98ac} .t-acc{fill:#f08a59} .t-hub{fill:#2d3142}
+.dot{fill:#f5f5f5}
+}
+</style>
+<marker id="feedback-loop-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon class="m" points="0 0, 8 3, 0 6"/></marker>
+<marker id="feedback-loop-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon class="m-soft" points="0 0, 8 3, 0 6"/></marker>
+<marker id="feedback-loop-arrow-acc" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon class="m-acc" points="0 0, 8 3, 0 6"/></marker>
+</defs>
+<rect class="bg" width="688" height="664" rx="8"/>
+<text class="mono t-soft" x="56" y="32" font-size="12" letter-spacing="0.08em">AFTER MARKET CLOSE</text>
+<path class="ln" d="M424.000,105.726 A240,240 0 0 1 528.969,179.073" stroke-width="1.2" marker-end="url(#feedback-loop-arrow)"/>
+<path class="ln" d="M567.285,244.000 A240,240 0 0 1 567.722,418.882" stroke-width="1.2" marker-end="url(#feedback-loop-arrow)"/>
+<path class="ln" d="M529.731,484.000 A240,240 0 0 1 425.130,557.871" stroke-width="1.2" marker-end="url(#feedback-loop-arrow)"/>
+<path class="ln" d="M264.000,558.274 A240,240 0 0 1 159.031,484.927" stroke-width="1.2" marker-end="url(#feedback-loop-arrow)"/>
+<path class="ln" d="M120.715,420.000 A240,240 0 0 1 120.278,245.118" stroke-width="1.2" marker-end="url(#feedback-loop-arrow)"/>
+<path class="ln" d="M158.269,180.000 A240,240 0 0 1 262.870,106.129" stroke-width="1.2" marker-end="url(#feedback-loop-arrow)"/>
+<path class="ln-soft" d="M344.000,124.000 L344.000,274.000" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#feedback-loop-arrow-soft)"/>
+<path class="ln-soft" d="M496.533,244.000 L439.330,277.002" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#feedback-loop-arrow-soft)"/>
+<path class="ln-soft" d="M496.533,420.000 L439.330,386.998" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#feedback-loop-arrow-soft)"/>
+<path class="ln-soft" d="M191.467,420.000 L248.670,386.998" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#feedback-loop-arrow-soft)"/>
+<rect class="card" x="264" y="60" width="160" height="64" rx="6" stroke-width="1"/>
+<text class="sans t-ink" x="344" y="90" font-size="16" font-weight="600" text-anchor="middle">예측 기록</text>
+<text class="sans t-muted" x="344" y="110" font-size="12" text-anchor="middle">D일 · 8명 + chief</text>
+<rect class="card" x="472" y="180" width="160" height="64" rx="6" stroke-width="1"/>
+<text class="sans t-ink" x="552" y="210" font-size="16" font-weight="600" text-anchor="middle">D+1 복기</text>
+<text class="sans t-muted" x="552" y="230" font-size="12" text-anchor="middle">교훈 2~4문장</text>
+<rect class="card" x="472" y="420" width="160" height="64" rx="6" stroke-width="1"/>
+<text class="sans t-ink" x="552" y="450" font-size="16" font-weight="600" text-anchor="middle">D+5 채점</text>
+<text class="sans t-muted" x="552" y="470" font-size="12" text-anchor="middle">실현 수익 기준</text>
+<rect class="mask" x="264" y="540" width="160" height="64" rx="6"/>
+<rect class="focal" x="264" y="540" width="160" height="64" rx="6" stroke-width="1"/>
+<text class="sans t-ink" x="344" y="570" font-size="16" font-weight="600" text-anchor="middle">증거 게이트</text>
+<text class="sans t-muted" x="344" y="590" font-size="12" text-anchor="middle">30표본 + z검정</text>
+<rect class="card" x="56" y="420" width="160" height="64" rx="6" stroke-width="1"/>
+<text class="sans t-ink" x="136" y="450" font-size="16" font-weight="600" text-anchor="middle">가중치 갱신</text>
+<text class="sans t-muted" x="136" y="470" font-size="12" text-anchor="middle">통과할 때만</text>
+<rect class="card" x="56" y="180" width="160" height="64" rx="6" stroke-width="1"/>
+<text class="sans t-ink" x="136" y="210" font-size="16" font-weight="600" text-anchor="middle">다음 판단</text>
+<text class="sans t-muted" x="136" y="230" font-size="12" text-anchor="middle">교훈·가중치 주입</text>
+<rect class="hub" x="244" y="280" width="200" height="104" rx="8"/>
+<text class="mono t-hub" x="344" y="330" font-size="16" font-weight="600" text-anchor="middle">mentions.db</text>
+<text class="sans t-hub" x="344" y="352" font-size="12" text-anchor="middle" opacity="0.8">판단·채점 원장</text>
+<line class="rule" x1="56" y1="624" x2="632" y2="624" stroke-width="0.8"/>
+<line class="ln" x1="56" y1="644" x2="84" y2="644" stroke-width="1.2"/>
+<text class="sans t-muted" x="92" y="648" font-size="12">매일 순서</text>
+<line class="ln-soft" x1="180" y1="644" x2="208" y2="644" stroke-width="1" stroke-dasharray="5,4"/>
+<text class="sans t-muted" x="216" y="648" font-size="12">DB에 기록</text>
+<rect class="focal" x="308" y="636" width="20" height="14" rx="3" stroke-width="1"/>
+<text class="sans t-muted" x="336" y="648" font-size="12">통과해야 다음으로</text>
+</svg>

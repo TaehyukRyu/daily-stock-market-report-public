@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="392" viewBox="0 0 920 392" role="img" aria-labelledby="rule-gate-title rule-gate-desc">
+<title id="rule-gate-title">규칙 검증 단계</title>
+<desc id="rule-gate-desc">스크리닝 규칙이 초안으로 등록된 뒤 게이트를 통과하면 섀도 운영과 운영 투입으로, 기준에 못 미치면 탈락으로 가는 상태 전이. 게이트 판정은 지금 동작하고 이후 단계는 운영 연결 예정이다.</desc>
+<defs>
+<style>
+.bg{fill:#f5f5f5} .mask{fill:#f5f5f5}
+.card{fill:#ffffff;stroke:#2d3142}
+.inp{fill:rgba(79,93,117,0.10);stroke:#7a8399}
+.opt{fill:rgba(45,49,66,0.02);stroke:rgba(45,49,66,0.40);stroke-dasharray:4 3}
+.ext{fill:rgba(45,49,66,0.03);stroke:rgba(45,49,66,0.30)}
+.store{fill:rgba(45,49,66,0.05);stroke:#4f5d75}
+.focal{fill:rgba(235,108,54,0.08);stroke:#eb6c36}
+.hub{fill:#2d3142}
+.ln{stroke:#4f5d75;fill:none} .ln-soft{stroke:#7a8399;fill:none} .ln-acc{stroke:#eb6c36;fill:none}
+.m{fill:#4f5d75} .m-soft{fill:#7a8399} .m-acc{fill:#eb6c36}
+.rule{stroke:rgba(45,49,66,0.12)}
+.t-ink{fill:#2d3142} .t-muted{fill:#4f5d75} .t-soft{fill:#7a8399} .t-acc{fill:#d9591f} .t-hub{fill:#f5f5f5}
+.dot{fill:#2d3142}
+.sans{font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',sans-serif} .mono{font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace}
+@media (prefers-color-scheme: dark){
+.bg{fill:#2d3142} .mask{fill:#2d3142}
+.card{fill:#393e53;stroke:#f5f5f5}
+.inp{fill:rgba(191,192,192,0.10);stroke:#8e98ac}
+.opt{fill:rgba(245,245,245,0.03);stroke:rgba(245,245,245,0.45)}
+.ext{fill:rgba(245,245,245,0.04);stroke:rgba(245,245,245,0.35)}
+.store{fill:rgba(245,245,245,0.06);stroke:#bfc0c0}
+.focal{fill:rgba(240,138,89,0.10);stroke:#f08a59}
+.hub{fill:#f5f5f5}
+.ln{stroke:#bfc0c0} .ln-soft{stroke:#8e98ac} .ln-acc{stroke:#f08a59}
+.m{fill:#bfc0c0} .m-soft{fill:#8e98ac} .m-acc{fill:#f08a59}
+.rule{stroke:rgba(245,245,245,0.12)}
+.t-ink{fill:#f5f5f5} .t-muted{fill:#bfc0c0} .t-soft{fill:#8e98ac} .t-acc{fill:#f08a59} .t-hub{fill:#2d3142}
+.dot{fill:#f5f5f5}
+}
+</style>
+<marker id="rule-gate-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon class="m" points="0 0, 8 3, 0 6"/></marker>
+<marker id="rule-gate-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon class="m-soft" points="0 0, 8 3, 0 6"/></marker>
+<marker id="rule-gate-arrow-acc" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon class="m-acc" points="0 0, 8 3, 0 6"/></marker>
+</defs>
+<rect class="bg" width="920" height="392" rx="8"/>
+<text class="mono t-soft" x="40" y="36" font-size="12" letter-spacing="0.08em">SCREENING RULE LIFECYCLE</text>
+<text class="sans t-muted" x="144" y="76" font-size="12">값 하나만 바꿔도 새 규칙 <tspan class="mono">(spec_hash)</tspan></text>
+<text class="sans t-muted" x="352" y="212" font-size="12">통과선은 분기마다 미리 고정</text>
+<path class="ln" d="M46,128 H142" stroke-width="1.2" marker-end="url(#rule-gate-arrow)"/>
+<path class="ln-acc" d="M256,128 H350" stroke-width="1.2" marker-end="url(#rule-gate-arrow-acc)"/>
+<path class="ln-soft" d="M464,128 H558" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#rule-gate-arrow-soft)"/>
+<path class="ln-soft" d="M672,128 H766" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#rule-gate-arrow-soft)"/>
+<path class="ln" d="M200,160 V254" stroke-width="1.2" marker-end="url(#rule-gate-arrow)"/>
+<path class="ln-soft" d="M824,160 V254" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#rule-gate-arrow-soft)"/>
+<path class="ln-soft" d="M616,160 V280 Q616,288 624,288 H766" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#rule-gate-arrow-soft)"/>
+<rect class="mask" x="62" y="104" width="64" height="16" rx="2"/>
+<text class="sans t-muted" x="94" y="116" font-size="12" font-weight="500" text-anchor="middle">규칙 등록</text>
+<rect class="mask" x="266" y="104" width="76" height="16" rx="2"/>
+<text class="sans t-acc" x="304" y="116" font-size="12" font-weight="600" text-anchor="middle">게이트 통과</text>
+<rect class="mask" x="480" y="104" width="64" height="16" rx="2"/>
+<text class="sans t-soft" x="512" y="116" font-size="12" font-weight="500" text-anchor="middle">실전 관찰</text>
+<rect class="mask" x="688" y="104" width="64" height="16" rx="2"/>
+<text class="sans t-soft" x="720" y="116" font-size="12" font-weight="500" text-anchor="middle">운영 교체</text>
+<rect class="mask" x="208" y="200" width="64" height="16" rx="2"/>
+<text class="sans t-muted" x="212" y="212" font-size="12" font-weight="500" text-anchor="start">기준 미달</text>
+<rect class="mask" x="832" y="200" width="32" height="16" rx="2"/>
+<text class="sans t-soft" x="836" y="212" font-size="12" font-weight="500" text-anchor="start">중단</text>
+<rect class="mask" x="680" y="264" width="32" height="16" rx="2"/>
+<text class="sans t-soft" x="696" y="276" font-size="12" font-weight="500" text-anchor="middle">중단</text>
+<circle class="dot" cx="40" cy="128" r="6"/>
+<rect class="card" x="144" y="96" width="112" height="64" rx="6" stroke-width="1"/>
+<text class="sans t-ink" x="200" y="126" font-size="16" font-weight="600" text-anchor="middle">초안</text>
+<text class="mono t-muted" x="200" y="146" font-size="12" text-anchor="middle">draft</text>
+<rect class="mask" x="352" y="96" width="112" height="64" rx="6"/>
+<rect class="focal" x="352" y="96" width="112" height="64" rx="6" stroke-width="1"/>
+<text class="sans t-ink" x="408" y="126" font-size="16" font-weight="600" text-anchor="middle">통과</text>
+<text class="mono t-muted" x="408" y="146" font-size="12" text-anchor="middle">gated</text>
+<rect class="card" x="560" y="96" width="112" height="64" rx="6" stroke-width="1"/>
+<text class="sans t-ink" x="616" y="126" font-size="16" font-weight="600" text-anchor="middle">섀도 운영</text>
+<text class="mono t-muted" x="616" y="146" font-size="12" text-anchor="middle">shadow</text>
+<rect class="card" x="768" y="96" width="112" height="64" rx="6" stroke-width="1"/>
+<text class="sans t-ink" x="824" y="126" font-size="16" font-weight="600" text-anchor="middle">운영 투입</text>
+<text class="mono t-muted" x="824" y="146" font-size="12" text-anchor="middle">active</text>
+<rect class="mask" x="144" y="256" width="112" height="64" rx="6"/>
+<rect class="store" x="144" y="256" width="112" height="64" rx="6" stroke-width="1"/>
+<text class="sans t-ink" x="200" y="286" font-size="16" font-weight="600" text-anchor="middle">탈락</text>
+<text class="mono t-muted" x="200" y="306" font-size="12" text-anchor="middle">rejected</text>
+<rect class="mask" x="768" y="256" width="112" height="64" rx="6"/>
+<rect class="store" x="768" y="256" width="112" height="64" rx="6" stroke-width="1"/>
+<text class="sans t-ink" x="824" y="286" font-size="16" font-weight="600" text-anchor="middle">은퇴</text>
+<text class="mono t-muted" x="824" y="306" font-size="12" text-anchor="middle">retired</text>
+<line class="rule" x1="40" y1="344" x2="880" y2="344" stroke-width="0.8"/>
+<line class="ln" x1="40" y1="364" x2="68" y2="364" stroke-width="1.2"/>
+<text class="sans t-muted" x="76" y="368" font-size="12">지금 동작</text>
+<line class="ln-soft" x1="164" y1="364" x2="192" y2="364" stroke-width="1" stroke-dasharray="5,4"/>
+<text class="sans t-muted" x="200" y="368" font-size="12">운영 연결 예정</text>
+</svg>
