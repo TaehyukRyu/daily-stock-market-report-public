@@ -18,7 +18,7 @@
 | 스크리닝 규칙 파일 | `src/config/screen_rules/example/example_rule.json` 1개 (형식 예시) | 실제 규칙은 운영 저장소에만 있다 |
 | 프롬프트 내용 검증 테스트 28건 | `tests/conftest.py`의 `REDACTED_PROMPT_TESTS`로 skip | **고치려 하지 말 것** — 운영 저장소에서는 통과한다 |
 | 운영 워크플로 (`ci.yml` · `feedback.yml`) | 없음 | 공개본에는 `tests.yml`(무료 테스트)만 있다 |
-| 설계·감사 문서, 실험 결과 | 없음 (`doc/` `docs/` `experiments/`) | — |
+| 설계·감사 문서, 실험 결과 | 없음 (`docs/` `experiments/`). `doc/`에는 README 그림 생성 스크립트만 있다 | 그림 수정: `python doc/make_readme_svgs.py assets` |
 
 공개본에서도 코드는 import·실행되지만, 프롬프트가 비어 있으므로 LLM 분석 결과는 운영 시스템과 다르다.
 
